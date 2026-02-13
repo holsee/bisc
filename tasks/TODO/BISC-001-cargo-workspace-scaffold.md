@@ -12,8 +12,8 @@ Set up the multi-crate workspace with shared dependencies and build configuratio
 - Root `Cargo.toml` workspace with members: `bisc-app`, `bisc-net`, `bisc-media`, `bisc-files`, `bisc-protocol`
 - Each crate has a `lib.rs` (or `main.rs` for `bisc-app`) with a placeholder module structure
 - `bisc-app` depends on all other crates
-- Shared dependencies pinned in `[workspace.dependencies]`: `serde`, `tokio`, `tracing`, `anyhow`, `bytes`
-- `.gitignore` for Rust projects
+- Shared dependencies pinned in `[workspace.dependencies]`: `serde`, `tokio`, `tracing`, `tracing-subscriber`, `anyhow`, `bytes`
+- `.gitignore` for Rust projects (include `test.log`)
 - `rustfmt.toml` with project formatting rules
 - `clippy.toml` or workspace-level clippy config in `Cargo.toml`
 
