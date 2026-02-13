@@ -1,0 +1,35 @@
+# bisc
+
+A native cross-platform desktop application for voice/video calls with screen sharing and file sharing.
+
+## Requirements
+
+### 1. Platform Support
+
+- Native desktop application supporting Windows, macOS, and Linux
+- UI must be fast, beautiful, and minimal
+
+### 2. Voice & Video Calls
+
+- Users can join a voice or video call
+- Users can share multiple video streams simultaneously
+- Users can set the quality of their video and audio streams
+
+### 3. Screen & Application Sharing
+
+- Share entire screen (includes system-wide audio)
+- Share a specific application window (includes scoped audio from that application only)
+- UI indicates when a user is sharing screens, apps, or audio streams
+- Viewers can watch more than one shared screen at a time
+
+### 4. Audio Sharing
+
+- Users can share a standalone audio stream from a specific application
+  - e.g. sharing audio from Spotify or VLC without sharing the screen
+
+### 5. File Sharing
+
+- Users can share files, images, text, and other media
+- On install, users select a directory where shared files will be stored
+- Downloads are opt-in: recipients click to download shared files
+- Peer-assisted downloads: if the original sender is offline, files can be downloaded from any other online user who has already downloaded them
