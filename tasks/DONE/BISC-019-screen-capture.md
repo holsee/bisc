@@ -20,10 +20,10 @@ Capture full screen or specific application windows using `scap`.
 
 ## Acceptance Criteria
 
-- [ ] `list_displays()` runs without panic — unit test
-- [ ] `list_windows()` runs without panic — unit test
-- [ ] Display capture starts and produces frames with correct dimensions (or returns permission error) — integration test
-- [ ] Window capture starts and produces frames — integration test
-- [ ] Capture stream can be stopped and the resources freed — integration test
-- [ ] `cargo clippy -- -D warnings` passes
-- [ ] `cargo fmt --check` passes
+- [x] `list_displays()` runs without panic — unit test
+- [x] `list_windows()` runs without panic — unit test
+- [x] Display capture starts and produces frames with correct dimensions (or returns permission error) — integration test
+- [x] Window capture starts and produces frames — integration test
+- [x] Capture stream can be stopped and the resources freed — integration test
+- [x] `cargo clippy -- -D warnings` passes
+- [x] `cargo fmt --check` passes

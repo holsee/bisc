@@ -9,6 +9,8 @@ pub mod fragmentation;
 pub mod jitter_buffer;
 pub mod negotiation;
 pub mod opus_codec;
+#[cfg(feature = "screen-capture")]
+pub mod screen_capture;
 pub mod transport;
 #[cfg(feature = "video-codec")]
 pub mod video_codec;

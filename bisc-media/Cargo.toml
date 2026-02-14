@@ -8,6 +8,7 @@ license.workspace = true
 audio = ["dep:cpal"]
 video = ["dep:nokhwa"]
 video-codec = ["dep:openh264"]
+screen-capture = ["dep:scap"]
 
 [dependencies]
 anyhow.workspace = true
@@ -16,6 +17,7 @@ bytes.workspace = true
 cpal = { workspace = true, optional = true }
 nokhwa = { workspace = true, optional = true }
 openh264 = { workspace = true, optional = true }
+scap = { workspace = true, optional = true }
 iroh.workspace = true
 opus.workspace = true
 postcard.workspace = true
