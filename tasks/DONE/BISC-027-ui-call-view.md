@@ -20,11 +20,11 @@ The main call screen showing connected peers, video grid, and media controls.
 
 ## Acceptance Criteria
 
-- [ ] Screen renders without panic with 0 peers — integration test
-- [ ] Peer list updates when `PeerAnnounced` / `PeerLeft` messages arrive — unit test on state
-- [ ] Mute button toggles mic state — unit test on message handling
-- [ ] Camera button toggles video state — unit test on message handling
-- [ ] Leave button triggers `LeaveChannel` — unit test
-- [ ] Video grid shows correct layout for 1, 2, 4 peers — functional requirement
-- [ ] `cargo clippy -- -D warnings` passes
-- [ ] `cargo fmt --check` passes
+- [x] Screen renders without panic with 0 peers — integration test
+- [x] Peer list updates when `PeerAnnounced` / `PeerLeft` messages arrive — unit test on state
+- [x] Mute button toggles mic state — unit test on message handling
+- [x] Camera button toggles video state — unit test on message handling
+- [x] Leave button triggers `LeaveChannel` — unit test
+- [x] Video grid shows correct layout for 1, 2, 4 peers — functional requirement
+- [x] `cargo clippy -- -D warnings` passes
+- [x] `cargo fmt --check` passes
