@@ -7,6 +7,7 @@ license.workspace = true
 [features]
 default = []
 sim = ["tokio/test-util"]
+test-util = ["sim", "dep:tracing-subscriber"]
 
 [dependencies]
 anyhow.workspace = true
@@ -20,10 +21,27 @@ rand.workspace = true
 serde.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+tracing-subscriber = { workspace = true, optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
 tracing-subscriber.workspace = true
+
+[[test]]
+name = "endpoint_gossip"
+required-features = ["test-util"]
+
+[[test]]
+name = "channel_lifecycle"
+required-features = ["test-util"]
+
+[[test]]
+name = "peer_connections"
+required-features = ["test-util"]
+
+[[test]]
+name = "sim_integration"
+required-features = ["test-util"]
 
 [lints.clippy]
 all = { level = "deny", priority = -1 }

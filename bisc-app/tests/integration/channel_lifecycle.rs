@@ -4,12 +4,16 @@ use std::time::Duration;
 
 use bisc_net::channel::Channel;
 
-use crate::helpers::{init_test_tracing, setup_peer, wait_for_peer_left, wait_for_peers};
+use crate::helpers::{
+    init_test_tracing, setup_peer, wait_for_peer_left, wait_for_peers, TestTimer,
+    PEER_DISCOVERY_TIMEOUT_SECS, PEER_LEFT_TIMEOUT_SECS,
+};
 
 /// Create a channel, 3 peers join, one leaves, remaining peers still see each other.
 #[tokio::test]
 async fn three_peers_join_one_leaves_channel_survives() {
     init_test_tracing();
+    let mut timer = TestTimer::new("three_peers_join_one_leaves_channel_survives");
 
     // Peer A creates channel
     let (ep_a, gossip_a, _router_a) = setup_peer().await;
@@ -18,7 +22,7 @@ async fn three_peers_join_one_leaves_channel_survives() {
             .await
             .unwrap();
 
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
 
     // Peer B joins
     let (ep_b, gossip_b, _router_b) = setup_peer().await;
@@ -27,8 +31,9 @@ async fn three_peers_join_one_leaves_channel_survives() {
         .unwrap();
 
     // Wait for A and B to discover each other
-    wait_for_peers(&mut channel_a, 1, 20).await;
-    wait_for_peers(&mut channel_b, 1, 20).await;
+    wait_for_peers(&mut channel_a, 1, PEER_DISCOVERY_TIMEOUT_SECS).await;
+    wait_for_peers(&mut channel_b, 1, PEER_DISCOVERY_TIMEOUT_SECS).await;
+    timer.phase("ab_discovery");
 
     // Peer C joins
     let (ep_c, gossip_c, _router_c) = setup_peer().await;
@@ -43,20 +48,22 @@ async fn three_peers_join_one_leaves_channel_survives() {
     .unwrap();
 
     // All three should see each other
-    wait_for_peers(&mut channel_a, 2, 20).await;
-    wait_for_peers(&mut channel_b, 2, 20).await;
-    wait_for_peers(&mut channel_c, 2, 20).await;
+    wait_for_peers(&mut channel_a, 2, PEER_DISCOVERY_TIMEOUT_SECS).await;
+    wait_for_peers(&mut channel_b, 2, PEER_DISCOVERY_TIMEOUT_SECS).await;
+    wait_for_peers(&mut channel_c, 2, PEER_DISCOVERY_TIMEOUT_SECS).await;
+    timer.phase("abc_discovery");
 
     tracing::info!("all 3 peers see each other");
 
     // B leaves gracefully
     let b_id = channel_b.our_endpoint_id();
     channel_b.leave();
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
 
     // A and C should detect B's departure
-    wait_for_peer_left(&mut channel_a, b_id, 20).await;
-    wait_for_peer_left(&mut channel_c, b_id, 20).await;
+    wait_for_peer_left(&mut channel_a, b_id, PEER_LEFT_TIMEOUT_SECS).await;
+    wait_for_peer_left(&mut channel_c, b_id, PEER_LEFT_TIMEOUT_SECS).await;
+    timer.phase("b_left");
 
     // A and C still see each other
     let a_peers = channel_a.peers().await;

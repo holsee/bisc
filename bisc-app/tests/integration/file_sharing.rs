@@ -8,13 +8,16 @@ use bisc_files::transfer::{FileReceiver, FileSender};
 use bisc_net::channel::Channel;
 
 use crate::helpers::{
-    init_test_tracing, setup_peer_with_media, wait_for_connection, wait_for_peers,
+    init_test_tracing, setup_peer_with_media, wait_for_connection, wait_for_peer_left,
+    wait_for_peers, TestTimer, CONNECTION_TIMEOUT_SECS, PEER_DISCOVERY_TIMEOUT_SECS,
+    PEER_LEFT_TIMEOUT_SECS,
 };
 
-/// Three-peer file sharing scenario: A shares → B downloads → A leaves → C downloads from B.
+/// Three-peer file sharing scenario: A shares -> B downloads -> A leaves -> C downloads from B.
 #[tokio::test]
 async fn three_peer_file_sharing() {
     init_test_tracing();
+    let mut timer = TestTimer::new("three_peer_file_sharing");
 
     let tmp = tempfile::TempDir::new().unwrap();
 
@@ -39,7 +42,7 @@ async fn three_peer_file_sharing() {
     .await
     .unwrap();
 
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
 
     let (ep_b, gossip_b, _router_b, incoming_b) = setup_peer_with_media().await;
     let mut channel_b = Channel::join(
@@ -52,14 +55,15 @@ async fn three_peer_file_sharing() {
     .await
     .unwrap();
 
-    wait_for_peers(&mut channel_a, 1, 20).await;
-    wait_for_peers(&mut channel_b, 1, 20).await;
+    wait_for_peers(&mut channel_a, 1, PEER_DISCOVERY_TIMEOUT_SECS).await;
+    wait_for_peers(&mut channel_b, 1, PEER_DISCOVERY_TIMEOUT_SECS).await;
 
     let a_id = channel_a.our_endpoint_id();
     let b_id = channel_b.our_endpoint_id();
 
-    wait_for_connection(&mut channel_a, b_id, 20).await;
-    wait_for_connection(&mut channel_b, a_id, 20).await;
+    wait_for_connection(&mut channel_a, b_id, CONNECTION_TIMEOUT_SECS).await;
+    wait_for_connection(&mut channel_b, a_id, CONNECTION_TIMEOUT_SECS).await;
+    timer.phase("ab_setup");
 
     let peer_conn_a_to_b = channel_a.connection(&b_id).await.unwrap();
     let peer_conn_b_from_a = channel_b.connection(&a_id).await.unwrap();
@@ -100,8 +104,9 @@ async fn three_peer_file_sharing() {
     assert_eq!(sent_manifest.file_hash, recv_manifest.file_hash);
     assert_eq!(recv_manifest.file_name, "test_document.txt");
     assert_eq!(recv_manifest.file_size, 4096);
+    timer.phase("ab_transfer");
 
-    tracing::info!("Phase 1: A→B file transfer complete");
+    tracing::info!("Phase 1: A->B file transfer complete");
 
     // Verify B has the file
     let store_b = FileStore::new(tmp.path().join("store_b")).unwrap();
@@ -111,11 +116,13 @@ async fn three_peer_file_sharing() {
     // --- Phase 2: A leaves, C joins via B's refreshed ticket ---
     let a_id_for_leave = channel_a.our_endpoint_id();
     channel_a.leave();
+    // Give the leave message time to propagate via gossip before closing the endpoint
+    tokio::time::sleep(Duration::from_millis(200)).await;
     ep_a.close().await;
     tracing::info!("A has left the channel");
 
     // Wait for B to detect A's departure before refreshing ticket
-    crate::helpers::wait_for_peer_left(&mut channel_b, a_id_for_leave, 20).await;
+    wait_for_peer_left(&mut channel_b, a_id_for_leave, PEER_LEFT_TIMEOUT_SECS).await;
     tracing::info!("B detected A left");
 
     // B refreshes the ticket so C can bootstrap from B's address
@@ -133,14 +140,15 @@ async fn three_peer_file_sharing() {
     .await
     .unwrap();
 
-    wait_for_peers(&mut channel_b, 1, 20).await;
-    wait_for_peers(&mut channel_c, 1, 20).await;
+    wait_for_peers(&mut channel_b, 1, PEER_DISCOVERY_TIMEOUT_SECS).await;
+    wait_for_peers(&mut channel_c, 1, PEER_DISCOVERY_TIMEOUT_SECS).await;
 
     let b_id = channel_b.our_endpoint_id();
     let c_id = channel_c.our_endpoint_id();
 
-    wait_for_connection(&mut channel_b, c_id, 20).await;
-    wait_for_connection(&mut channel_c, b_id, 20).await;
+    wait_for_connection(&mut channel_b, c_id, CONNECTION_TIMEOUT_SECS).await;
+    wait_for_connection(&mut channel_c, b_id, CONNECTION_TIMEOUT_SECS).await;
+    timer.phase("bc_setup");
 
     let peer_conn_b_to_c = channel_b.connection(&c_id).await.unwrap();
     let peer_conn_c_from_b = channel_c.connection(&b_id).await.unwrap();
@@ -182,8 +190,9 @@ async fn three_peer_file_sharing() {
         recv_manifest_2.file_hash, recv_manifest.file_hash,
         "C should have the same file as B"
     );
+    timer.phase("bc_transfer");
 
-    tracing::info!("Phase 3: B→C file transfer complete (A was gone)");
+    tracing::info!("Phase 3: B->C file transfer complete (A was gone)");
 
     // Verify C has the file
     let store_c = FileStore::new(tmp.path().join("store_c")).unwrap();

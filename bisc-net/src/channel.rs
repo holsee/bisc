@@ -8,6 +8,7 @@ use anyhow::Result;
 use bisc_protocol::channel::{ChannelMessage, MediaCapabilities};
 use bisc_protocol::ticket::BiscTicket;
 use bisc_protocol::types::{EndpointAddr, EndpointId};
+use iroh::address_lookup::memory::MemoryLookup;
 use iroh_gossip::proto::TopicId;
 use tokio::sync::{mpsc, watch, RwLock};
 
@@ -139,6 +140,35 @@ impl Channel {
             .iter()
             .filter_map(|addr| iroh::EndpointId::from_bytes(&addr.id.0).ok())
             .collect();
+
+        // Register bootstrap peer addresses with iroh so it can reach them
+        // without relay servers (critical for direct localhost connections in tests
+        // and self-hosted deployments).
+        let memory_lookup = MemoryLookup::new();
+        for addr_info in &ticket.bootstrap_addrs {
+            if let Ok(peer_id) = iroh::EndpointId::from_bytes(&addr_info.id.0) {
+                let mut transport_addrs = Vec::new();
+                for addr_str in &addr_info.addrs {
+                    if let Ok(socket_addr) = addr_str.parse::<std::net::SocketAddr>() {
+                        transport_addrs.push(iroh::TransportAddr::Ip(socket_addr));
+                    }
+                }
+                if let Some(ref relay) = addr_info.relay_url {
+                    if let Ok(url) = relay.parse() {
+                        transport_addrs.push(iroh::TransportAddr::Relay(url));
+                    }
+                }
+                if !transport_addrs.is_empty() {
+                    let iroh_addr = iroh::EndpointAddr {
+                        id: peer_id,
+                        addrs: transport_addrs.into_iter().collect(),
+                    };
+                    memory_lookup.add_endpoint_info(iroh_addr);
+                    tracing::debug!(peer = %peer_id, "registered bootstrap peer address");
+                }
+            }
+        }
+        endpoint.address_lookup().add(memory_lookup);
 
         tracing::info!(
             ?iroh_topic,

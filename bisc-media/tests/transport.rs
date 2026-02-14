@@ -4,84 +4,17 @@ use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use bisc_media::transport::MediaTransport;
-use bisc_net::channel::{Channel, ChannelEvent};
-use bisc_net::connection::MediaProtocol;
-use bisc_net::endpoint::BiscEndpoint;
-use bisc_net::gossip::GossipHandle;
+use bisc_net::channel::Channel;
+use bisc_net::testing::{
+    init_test_tracing, setup_peer_with_media, wait_for_connection, wait_for_peers, TestTimer,
+    CONNECTION_TIMEOUT_SECS, PEER_DISCOVERY_TIMEOUT_SECS,
+};
 use bisc_protocol::media::MediaPacket;
-use bisc_protocol::types::EndpointId;
-use tokio::sync::mpsc;
-
-fn init_test_tracing() {
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "debug".into()),
-        )
-        .with_test_writer()
-        .try_init();
-}
-
-/// Helper: create an endpoint + gossip pair with media protocol support.
-async fn setup_peer_with_media() -> (
-    BiscEndpoint,
-    GossipHandle,
-    iroh::protocol::Router,
-    mpsc::UnboundedReceiver<iroh::endpoint::Connection>,
-) {
-    let ep = BiscEndpoint::new().await.expect("endpoint creation failed");
-    let (media_proto, incoming_rx) = MediaProtocol::new();
-    let (gossip, router) = GossipHandle::with_protocols(ep.endpoint(), media_proto);
-    (ep, gossip, router, incoming_rx)
-}
-
-/// Wait for peers to discover each other.
-async fn wait_for_peers(channel: &mut Channel, expected_count: usize, timeout_secs: u64) {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(timeout_secs);
-    loop {
-        let peers = channel.peers().await;
-        if peers.len() >= expected_count {
-            return;
-        }
-        if tokio::time::Instant::now() > deadline {
-            panic!(
-                "timed out waiting for {} peers, got {}",
-                expected_count,
-                peers.len()
-            );
-        }
-        match tokio::time::timeout(Duration::from_millis(500), channel.recv_event()).await {
-            Ok(Some(_event)) => {}
-            _ => {}
-        }
-    }
-}
-
-/// Wait for a PeerConnected event.
-async fn wait_for_connection(
-    channel: &mut Channel,
-    peer_id: EndpointId,
-    timeout_secs: u64,
-) -> bool {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(timeout_secs);
-    loop {
-        if channel.connection(&peer_id).await.is_some() {
-            return true;
-        }
-        if tokio::time::Instant::now() > deadline {
-            return false;
-        }
-        match tokio::time::timeout(Duration::from_millis(500), channel.recv_event()).await {
-            Ok(Some(ChannelEvent::PeerConnected(id))) if id == peer_id => return true,
-            Ok(Some(_)) => {}
-            _ => {}
-        }
-    }
-}
 
 #[tokio::test]
 async fn media_packet_roundtrip_over_quic() {
     init_test_tracing();
+    let mut timer = TestTimer::new("media_packet_roundtrip_over_quic");
 
     // Set up two peers with media connections
     let (ep_a, gossip_a, _router_a, incoming_a) = setup_peer_with_media().await;
@@ -94,7 +27,7 @@ async fn media_packet_roundtrip_over_quic() {
     .await
     .unwrap();
 
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
 
     let (ep_b, gossip_b, _router_b, incoming_b) = setup_peer_with_media().await;
     let mut channel_b = Channel::join(
@@ -107,14 +40,15 @@ async fn media_packet_roundtrip_over_quic() {
     .await
     .unwrap();
 
-    wait_for_peers(&mut channel_a, 1, 20).await;
-    wait_for_peers(&mut channel_b, 1, 20).await;
+    wait_for_peers(&mut channel_a, 1, PEER_DISCOVERY_TIMEOUT_SECS).await;
+    wait_for_peers(&mut channel_b, 1, PEER_DISCOVERY_TIMEOUT_SECS).await;
 
     let a_id = channel_a.our_endpoint_id();
     let b_id = channel_b.our_endpoint_id();
 
-    wait_for_connection(&mut channel_a, b_id, 20).await;
-    wait_for_connection(&mut channel_b, a_id, 20).await;
+    wait_for_connection(&mut channel_a, b_id, CONNECTION_TIMEOUT_SECS).await;
+    wait_for_connection(&mut channel_b, a_id, CONNECTION_TIMEOUT_SECS).await;
+    timer.phase("setup_and_connect");
 
     // Get the underlying connections for transport
     let conn_a = channel_a
@@ -147,6 +81,7 @@ async fn media_packet_roundtrip_over_quic() {
         .await
         .expect("timed out waiting for packet")
         .expect("failed to receive packet");
+    timer.phase("packet_roundtrip");
 
     assert_eq!(received.stream_id, 0);
     assert_eq!(received.sequence, 0);
@@ -175,6 +110,7 @@ async fn media_packet_roundtrip_over_quic() {
 #[tokio::test]
 async fn audio_sized_packets_sent_and_received() {
     init_test_tracing();
+    let mut timer = TestTimer::new("audio_sized_packets_sent_and_received");
 
     let (ep_a, gossip_a, _router_a, incoming_a) = setup_peer_with_media().await;
     let (mut channel_a, ticket) = Channel::create(
@@ -186,7 +122,7 @@ async fn audio_sized_packets_sent_and_received() {
     .await
     .unwrap();
 
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
 
     let (ep_b, gossip_b, _router_b, incoming_b) = setup_peer_with_media().await;
     let mut channel_b = Channel::join(
@@ -199,14 +135,15 @@ async fn audio_sized_packets_sent_and_received() {
     .await
     .unwrap();
 
-    wait_for_peers(&mut channel_a, 1, 20).await;
-    wait_for_peers(&mut channel_b, 1, 20).await;
+    wait_for_peers(&mut channel_a, 1, PEER_DISCOVERY_TIMEOUT_SECS).await;
+    wait_for_peers(&mut channel_b, 1, PEER_DISCOVERY_TIMEOUT_SECS).await;
 
     let a_id = channel_a.our_endpoint_id();
     let b_id = channel_b.our_endpoint_id();
 
-    wait_for_connection(&mut channel_a, b_id, 20).await;
-    wait_for_connection(&mut channel_b, a_id, 20).await;
+    wait_for_connection(&mut channel_a, b_id, CONNECTION_TIMEOUT_SECS).await;
+    wait_for_connection(&mut channel_b, a_id, CONNECTION_TIMEOUT_SECS).await;
+    timer.phase("setup_and_connect");
 
     let conn_a = channel_a.connection(&b_id).await.unwrap();
     let conn_b = channel_b.connection(&a_id).await.unwrap();
@@ -242,6 +179,7 @@ async fn audio_sized_packets_sent_and_received() {
         assert_eq!(received.timestamp, i * 960);
         assert_eq!(received.payload.len(), 160);
     }
+    timer.phase("packet_burst");
 
     assert_eq!(
         transport_a.metrics().packets_sent.load(Ordering::Relaxed),

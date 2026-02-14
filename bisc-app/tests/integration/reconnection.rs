@@ -4,12 +4,16 @@ use std::time::Duration;
 
 use bisc_net::channel::Channel;
 
-use crate::helpers::{init_test_tracing, setup_peer, wait_for_peer_left, wait_for_peers};
+use crate::helpers::{
+    init_test_tracing, setup_peer, wait_for_peer_left, wait_for_peers, TestTimer,
+    PEER_DISCOVERY_TIMEOUT_SECS, PEER_LEFT_TIMEOUT_SECS,
+};
 
 /// A peer disconnects abruptly and a new peer joins via a refreshed ticket.
 #[tokio::test]
 async fn peer_disconnects_new_peer_joins_via_refreshed_ticket() {
     init_test_tracing();
+    let mut timer = TestTimer::new("peer_disconnects_new_peer_joins_via_refreshed_ticket");
 
     // A creates channel
     let (ep_a, gossip_a, _router_a) = setup_peer().await;
@@ -18,7 +22,7 @@ async fn peer_disconnects_new_peer_joins_via_refreshed_ticket() {
             .await
             .unwrap();
 
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
 
     // B joins
     let (ep_b, gossip_b, _router_b) = setup_peer().await;
@@ -26,8 +30,9 @@ async fn peer_disconnects_new_peer_joins_via_refreshed_ticket() {
         .await
         .unwrap();
 
-    wait_for_peers(&mut channel_a, 1, 20).await;
-    wait_for_peers(&mut channel_b, 1, 20).await;
+    wait_for_peers(&mut channel_a, 1, PEER_DISCOVERY_TIMEOUT_SECS).await;
+    wait_for_peers(&mut channel_b, 1, PEER_DISCOVERY_TIMEOUT_SECS).await;
+    timer.phase("ab_discovery");
 
     let b_id = channel_b.our_endpoint_id();
 
@@ -35,10 +40,11 @@ async fn peer_disconnects_new_peer_joins_via_refreshed_ticket() {
 
     // B leaves gracefully
     channel_b.leave();
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
 
     // A detects B's departure
-    wait_for_peer_left(&mut channel_a, b_id, 20).await;
+    wait_for_peer_left(&mut channel_a, b_id, PEER_LEFT_TIMEOUT_SECS).await;
+    timer.phase("b_left");
     tracing::info!("A detected B left");
 
     // A refreshes ticket for new joiners
@@ -57,8 +63,9 @@ async fn peer_disconnects_new_peer_joins_via_refreshed_ticket() {
     .unwrap();
 
     // A and C should see each other
-    wait_for_peers(&mut channel_a, 1, 20).await;
-    wait_for_peers(&mut channel_c, 1, 20).await;
+    wait_for_peers(&mut channel_a, 1, PEER_DISCOVERY_TIMEOUT_SECS).await;
+    wait_for_peers(&mut channel_c, 1, PEER_DISCOVERY_TIMEOUT_SECS).await;
+    timer.phase("ac_discovery");
 
     let a_peers = channel_a.peers().await;
     let c_peers = channel_c.peers().await;

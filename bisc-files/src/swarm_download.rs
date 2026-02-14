@@ -650,7 +650,7 @@ mod tests {
         let server2_dir = TempDir::new().unwrap();
         let client_dir = TempDir::new().unwrap();
 
-        let server1_store = Arc::new(FileStore::new(server1_dir.path().to_path_buf()).unwrap());
+        let _server1_store = Arc::new(FileStore::new(server1_dir.path().to_path_buf()).unwrap());
         let server2_store = Arc::new(FileStore::new(server2_dir.path().to_path_buf()).unwrap());
         let client_store = FileStore::new(client_dir.path().to_path_buf()).unwrap();
 

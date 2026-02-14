@@ -8,77 +8,11 @@ use std::time::Duration;
 use bisc_media::control::{MediaControlReceiver, MediaControlSender, ReceiverReportGenerator};
 use bisc_media::jitter_buffer::JitterBuffer;
 use bisc_media::transport::MediaTransport;
-use bisc_net::channel::{Channel, ChannelEvent};
-use bisc_net::connection::MediaProtocol;
-use bisc_net::endpoint::BiscEndpoint;
-use bisc_net::gossip::GossipHandle;
+use bisc_net::testing::{
+    init_test_tracing, setup_peer_with_media, wait_for_connection, wait_for_peers, TestTimer,
+    CONNECTION_TIMEOUT_SECS, PEER_DISCOVERY_TIMEOUT_SECS,
+};
 use bisc_protocol::media::{MediaControl, MediaPacket};
-use bisc_protocol::types::EndpointId;
-use tokio::sync::mpsc;
-
-fn init_test_tracing() {
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "debug".into()),
-        )
-        .with_test_writer()
-        .try_init();
-}
-
-async fn setup_peer_with_media() -> (
-    BiscEndpoint,
-    GossipHandle,
-    iroh::protocol::Router,
-    mpsc::UnboundedReceiver<iroh::endpoint::Connection>,
-) {
-    let ep = BiscEndpoint::new().await.expect("endpoint creation failed");
-    let (media_proto, incoming_rx) = MediaProtocol::new();
-    let (gossip, router) = GossipHandle::with_protocols(ep.endpoint(), media_proto);
-    (ep, gossip, router, incoming_rx)
-}
-
-async fn wait_for_peers(channel: &mut Channel, expected_count: usize, timeout_secs: u64) {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(timeout_secs);
-    loop {
-        let peers = channel.peers().await;
-        if peers.len() >= expected_count {
-            return;
-        }
-        if tokio::time::Instant::now() > deadline {
-            panic!(
-                "timed out waiting for {} peers, got {}",
-                expected_count,
-                peers.len()
-            );
-        }
-        match tokio::time::timeout(Duration::from_millis(500), channel.recv_event()).await {
-            Ok(Some(_)) => {}
-            _ => {}
-        }
-    }
-}
-
-async fn wait_for_connection(
-    channel: &mut Channel,
-    peer_id: EndpointId,
-    timeout_secs: u64,
-) -> bool {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(timeout_secs);
-    loop {
-        if channel.connection(&peer_id).await.is_some() {
-            return true;
-        }
-        if tokio::time::Instant::now() > deadline {
-            return false;
-        }
-        match tokio::time::timeout(Duration::from_millis(500), channel.recv_event()).await {
-            Ok(Some(ChannelEvent::PeerConnected(id))) if id == peer_id => return true,
-            Ok(Some(_)) => {}
-            _ => {}
-        }
-    }
-}
 
 /// Comprehensive control channel test: single connection setup, multiple scenarios.
 ///
@@ -90,10 +24,11 @@ async fn wait_for_connection(
 #[tokio::test]
 async fn control_channel_over_quic() {
     init_test_tracing();
+    let mut timer = TestTimer::new("control_channel_over_quic");
 
     // --- Setup: establish channel and connection ---
     let (ep_a, gossip_a, _router_a, incoming_a) = setup_peer_with_media().await;
-    let (mut channel_a, ticket) = Channel::create(
+    let (mut channel_a, ticket) = bisc_net::channel::Channel::create(
         ep_a.endpoint(),
         &gossip_a,
         "alice".to_string(),
@@ -102,10 +37,10 @@ async fn control_channel_over_quic() {
     .await
     .unwrap();
 
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
 
     let (ep_b, gossip_b, _router_b, incoming_b) = setup_peer_with_media().await;
-    let mut channel_b = Channel::join(
+    let mut channel_b = bisc_net::channel::Channel::join(
         ep_b.endpoint(),
         &gossip_b,
         &ticket,
@@ -115,14 +50,20 @@ async fn control_channel_over_quic() {
     .await
     .unwrap();
 
-    wait_for_peers(&mut channel_a, 1, 20).await;
-    wait_for_peers(&mut channel_b, 1, 20).await;
+    timer.phase("channel_setup");
+
+    wait_for_peers(&mut channel_a, 1, PEER_DISCOVERY_TIMEOUT_SECS).await;
+    wait_for_peers(&mut channel_b, 1, PEER_DISCOVERY_TIMEOUT_SECS).await;
+
+    timer.phase("peer_discovery");
 
     let a_id = channel_a.our_endpoint_id();
     let b_id = channel_b.our_endpoint_id();
 
-    wait_for_connection(&mut channel_a, b_id, 20).await;
-    wait_for_connection(&mut channel_b, a_id, 20).await;
+    wait_for_connection(&mut channel_a, b_id, CONNECTION_TIMEOUT_SECS).await;
+    wait_for_connection(&mut channel_b, a_id, CONNECTION_TIMEOUT_SECS).await;
+
+    timer.phase("connection_established");
 
     let peer_conn_a = channel_a
         .connection(&b_id)
@@ -178,6 +119,8 @@ async fn control_channel_over_quic() {
         .expect("receiver panicked");
     assert_eq!(sent_msg, received_msg);
     tracing::info!("Test 1 passed: RequestKeyframe sent and received");
+
+    timer.phase("test1_request_keyframe");
 
     // --- Test 2: Multiple interleaved control message types ---
     let opener = opener_conn.clone();
@@ -239,6 +182,8 @@ async fn control_channel_over_quic() {
         .expect("receiver panicked");
     tracing::info!("Test 2 passed: multiple interleaved control messages");
 
+    timer.phase("test2_interleaved_messages");
+
     // --- Test 3: RTT estimation via bidirectional report exchange ---
     let opener = opener_conn.clone();
     let accepter = accepter_conn.clone();
@@ -294,6 +239,8 @@ async fn control_channel_over_quic() {
     assert!(rtt < 100, "localhost RTT should be < 100ms, got {rtt}ms");
     tracing::info!("Test 3 passed: RTT estimation on localhost");
 
+    timer.phase("test3_rtt_estimation");
+
     // --- Test 4: ReceiverReport with correct packet counts (via datagrams) ---
     let conn_a_for_transport = peer_conn_a.connection().clone();
     let conn_b_for_transport = peer_conn_b.connection().clone();
@@ -346,6 +293,8 @@ async fn control_channel_over_quic() {
         _ => panic!("expected ReceiverReport"),
     }
     tracing::info!("Test 4 passed: ReceiverReport with correct packet counts");
+
+    timer.phase("test4_receiver_report");
 
     // --- Cleanup ---
     channel_a.leave();

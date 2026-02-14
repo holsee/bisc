@@ -23,6 +23,7 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 
 [dev-dependencies]
+bisc-net = { workspace = true, features = ["test-util"] }
 iroh.workspace = true
 tempfile.workspace = true
 

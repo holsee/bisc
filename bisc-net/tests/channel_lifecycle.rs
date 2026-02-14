@@ -3,70 +3,10 @@
 use std::time::Duration;
 
 use bisc_net::channel::Channel;
-use bisc_net::endpoint::BiscEndpoint;
-use bisc_net::gossip::GossipHandle;
-
-fn init_test_tracing() {
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "debug".into()),
-        )
-        .with_test_writer()
-        .try_init();
-}
-
-/// Helper: create an endpoint + gossip pair.
-async fn setup_peer() -> (BiscEndpoint, GossipHandle, iroh::protocol::Router) {
-    let ep = BiscEndpoint::new().await.expect("endpoint creation failed");
-    let (gossip, router) = GossipHandle::new(ep.endpoint());
-    (ep, gossip, router)
-}
-
-/// Wait for a specific number of peers to appear via channel events.
-async fn wait_for_peers(channel: &mut Channel, expected_count: usize, timeout_secs: u64) {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(timeout_secs);
-    loop {
-        let peers = channel.peers().await;
-        if peers.len() >= expected_count {
-            return;
-        }
-        if tokio::time::Instant::now() > deadline {
-            panic!(
-                "timed out waiting for {} peers, got {}",
-                expected_count,
-                peers.len()
-            );
-        }
-        // Drain events to process announcements
-        match tokio::time::timeout(Duration::from_millis(500), channel.recv_event()).await {
-            Ok(Some(_event)) => {}
-            _ => {}
-        }
-    }
-}
-
-/// Wait for a specific peer to leave via events.
-async fn wait_for_peer_left(
-    channel: &mut Channel,
-    peer_id: bisc_protocol::types::EndpointId,
-    timeout_secs: u64,
-) {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(timeout_secs);
-    loop {
-        let peers = channel.peers().await;
-        if !peers.contains_key(&peer_id) {
-            return;
-        }
-        if tokio::time::Instant::now() > deadline {
-            panic!("timed out waiting for peer {:?} to leave", peer_id);
-        }
-        match tokio::time::timeout(Duration::from_millis(500), channel.recv_event()).await {
-            Ok(Some(_event)) => {}
-            _ => {}
-        }
-    }
-}
+use bisc_net::testing::{
+    init_test_tracing, setup_peer, wait_for_peer_left, wait_for_peers, TestTimer,
+    PEER_DISCOVERY_TIMEOUT_SECS, PEER_LEFT_TIMEOUT_SECS,
+};
 
 #[tokio::test]
 async fn create_channel_produces_valid_ticket() {
@@ -90,6 +30,7 @@ async fn create_channel_produces_valid_ticket() {
 #[tokio::test]
 async fn two_peers_see_each_other() {
     init_test_tracing();
+    let mut timer = TestTimer::new("two_peers_see_each_other");
 
     // Peer A creates channel
     let (ep_a, gossip_a, _router_a) = setup_peer().await;
@@ -99,17 +40,19 @@ async fn two_peers_see_each_other() {
             .unwrap();
 
     // Wait for A to have its address ready
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
 
     // Peer B joins via ticket
     let (ep_b, gossip_b, _router_b) = setup_peer().await;
     let mut channel_b = Channel::join(ep_b.endpoint(), &gossip_b, &ticket, "bob".to_string(), None)
         .await
         .unwrap();
+    timer.phase("setup");
 
     // Both should see each other
-    wait_for_peers(&mut channel_a, 1, 20).await;
-    wait_for_peers(&mut channel_b, 1, 20).await;
+    wait_for_peers(&mut channel_a, 1, PEER_DISCOVERY_TIMEOUT_SECS).await;
+    wait_for_peers(&mut channel_b, 1, PEER_DISCOVERY_TIMEOUT_SECS).await;
+    timer.phase("peer_discovery");
 
     let a_peers = channel_a.peers().await;
     let b_peers = channel_b.peers().await;
@@ -136,6 +79,7 @@ async fn two_peers_see_each_other() {
 #[tokio::test]
 async fn three_peers_all_see_each_other() {
     init_test_tracing();
+    let mut timer = TestTimer::new("three_peers_all_see_each_other");
 
     // Peer A creates channel
     let (ep_a, gossip_a, _router_a) = setup_peer().await;
@@ -144,7 +88,7 @@ async fn three_peers_all_see_each_other() {
             .await
             .unwrap();
 
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
 
     // Peer B joins
     let (ep_b, gossip_b, _router_b) = setup_peer().await;
@@ -153,8 +97,9 @@ async fn three_peers_all_see_each_other() {
         .unwrap();
 
     // Wait for A and B to see each other before C joins
-    wait_for_peers(&mut channel_a, 1, 20).await;
-    wait_for_peers(&mut channel_b, 1, 20).await;
+    wait_for_peers(&mut channel_a, 1, PEER_DISCOVERY_TIMEOUT_SECS).await;
+    wait_for_peers(&mut channel_b, 1, PEER_DISCOVERY_TIMEOUT_SECS).await;
+    timer.phase("ab_discovery");
 
     // Peer C joins
     let (ep_c, gossip_c, _router_c) = setup_peer().await;
@@ -169,9 +114,10 @@ async fn three_peers_all_see_each_other() {
     .unwrap();
 
     // All three should see each other (each sees 2 peers)
-    wait_for_peers(&mut channel_a, 2, 20).await;
-    wait_for_peers(&mut channel_b, 2, 20).await;
-    wait_for_peers(&mut channel_c, 2, 20).await;
+    wait_for_peers(&mut channel_a, 2, PEER_DISCOVERY_TIMEOUT_SECS).await;
+    wait_for_peers(&mut channel_b, 2, PEER_DISCOVERY_TIMEOUT_SECS).await;
+    wait_for_peers(&mut channel_c, 2, PEER_DISCOVERY_TIMEOUT_SECS).await;
+    timer.phase("abc_discovery");
 
     let a_peers = channel_a.peers().await;
     let b_peers = channel_b.peers().await;
@@ -192,6 +138,7 @@ async fn three_peers_all_see_each_other() {
 #[tokio::test]
 async fn peer_leave_removes_from_list() {
     init_test_tracing();
+    let mut timer = TestTimer::new("peer_leave_removes_from_list");
 
     let (ep_a, gossip_a, _router_a) = setup_peer().await;
     let (mut channel_a, ticket) =
@@ -199,7 +146,7 @@ async fn peer_leave_removes_from_list() {
             .await
             .unwrap();
 
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
 
     let (ep_b, gossip_b, _router_b) = setup_peer().await;
     let mut channel_b = Channel::join(ep_b.endpoint(), &gossip_b, &ticket, "bob".to_string(), None)
@@ -209,15 +156,18 @@ async fn peer_leave_removes_from_list() {
     let b_id = channel_b.our_endpoint_id();
 
     // Wait for both to see each other
-    wait_for_peers(&mut channel_a, 1, 20).await;
-    wait_for_peers(&mut channel_b, 1, 20).await;
+    wait_for_peers(&mut channel_a, 1, PEER_DISCOVERY_TIMEOUT_SECS).await;
+    wait_for_peers(&mut channel_b, 1, PEER_DISCOVERY_TIMEOUT_SECS).await;
+    timer.phase("peer_discovery");
 
     // B leaves
     channel_b.leave();
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
 
     // A should see B removed
-    wait_for_peer_left(&mut channel_a, b_id, 20).await;
+    wait_for_peer_left(&mut channel_a, b_id, PEER_LEFT_TIMEOUT_SECS).await;
+    timer.phase("peer_left");
+
     let a_peers = channel_a.peers().await;
     assert!(
         !a_peers.contains_key(&b_id),
@@ -232,34 +182,30 @@ async fn peer_leave_removes_from_list() {
 #[tokio::test]
 async fn ticket_refresh_allows_new_peer_to_join() {
     init_test_tracing();
+    let mut timer = TestTimer::new("ticket_refresh_allows_new_peer_to_join");
 
     // A creates channel
     let (ep_a, gossip_a, _router_a) = setup_peer().await;
-    let (mut channel_a, _ticket) =
+    let (mut channel_a, ticket) =
         Channel::create(ep_a.endpoint(), &gossip_a, "alice".to_string(), None)
             .await
             .unwrap();
 
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
 
     // B joins
     let (ep_b, gossip_b, _router_b) = setup_peer().await;
-    let mut channel_b = Channel::join(
-        ep_b.endpoint(),
-        &gossip_b,
-        &_ticket,
-        "bob".to_string(),
-        None,
-    )
-    .await
-    .unwrap();
+    let mut channel_b = Channel::join(ep_b.endpoint(), &gossip_b, &ticket, "bob".to_string(), None)
+        .await
+        .unwrap();
 
-    wait_for_peers(&mut channel_a, 1, 20).await;
-    wait_for_peers(&mut channel_b, 1, 20).await;
+    wait_for_peers(&mut channel_a, 1, PEER_DISCOVERY_TIMEOUT_SECS).await;
+    wait_for_peers(&mut channel_b, 1, PEER_DISCOVERY_TIMEOUT_SECS).await;
+    timer.phase("ab_discovery");
 
     // A leaves
     channel_a.leave();
-    tokio::time::sleep(Duration::from_millis(1000)).await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
 
     // B generates a refreshed ticket
     let new_ticket = channel_b.refresh_ticket();
@@ -277,8 +223,9 @@ async fn ticket_refresh_allows_new_peer_to_join() {
     .unwrap();
 
     // B and C should see each other
-    wait_for_peers(&mut channel_b, 1, 20).await;
-    wait_for_peers(&mut channel_c, 1, 20).await;
+    wait_for_peers(&mut channel_b, 1, PEER_DISCOVERY_TIMEOUT_SECS).await;
+    wait_for_peers(&mut channel_c, 1, PEER_DISCOVERY_TIMEOUT_SECS).await;
+    timer.phase("bc_discovery");
 
     let b_peers = channel_b.peers().await;
     let c_id = channel_c.our_endpoint_id();
@@ -298,6 +245,7 @@ async fn ticket_refresh_allows_new_peer_to_join() {
 #[tokio::test]
 async fn heartbeat_timeout_removes_peer() {
     init_test_tracing();
+    let mut timer = TestTimer::new("heartbeat_timeout_removes_peer");
 
     let (ep_a, gossip_a, _router_a) = setup_peer().await;
     let (mut channel_a, ticket) =
@@ -305,7 +253,7 @@ async fn heartbeat_timeout_removes_peer() {
             .await
             .unwrap();
 
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
 
     let (ep_b, gossip_b, _router_b) = setup_peer().await;
     let mut channel_b = Channel::join(ep_b.endpoint(), &gossip_b, &ticket, "bob".to_string(), None)
@@ -315,18 +263,18 @@ async fn heartbeat_timeout_removes_peer() {
     let b_id = channel_b.our_endpoint_id();
 
     // Wait for both to see each other
-    wait_for_peers(&mut channel_a, 1, 20).await;
-    wait_for_peers(&mut channel_b, 1, 20).await;
+    wait_for_peers(&mut channel_a, 1, PEER_DISCOVERY_TIMEOUT_SECS).await;
+    wait_for_peers(&mut channel_b, 1, PEER_DISCOVERY_TIMEOUT_SECS).await;
+    timer.phase("peer_discovery");
 
     // Drop B's channel abruptly (no explicit leave, simulates crash)
-    // The shutdown_tx fires on drop, but let's shut down the endpoint too
-    // to truly stop heartbeats
     drop(channel_b);
     ep_b.close().await;
 
     // A should eventually time out B (after PEER_TIMEOUT = 15s)
     // Wait up to 25 seconds for the timeout to trigger
     wait_for_peer_left(&mut channel_a, b_id, 25).await;
+    timer.phase("heartbeat_timeout");
 
     let a_peers = channel_a.peers().await;
     assert!(

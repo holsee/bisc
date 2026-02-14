@@ -10,7 +10,8 @@ use bisc_net::channel::Channel;
 use tokio::sync::mpsc;
 
 use crate::helpers::{
-    init_test_tracing, setup_peer_with_media, wait_for_connection, wait_for_peers,
+    init_test_tracing, setup_peer_with_media, wait_for_connection, wait_for_peers, TestTimer,
+    CONNECTION_TIMEOUT_SECS, PEER_DISCOVERY_TIMEOUT_SECS,
 };
 
 /// Generate a 440Hz sine wave frame (mono, 960 samples = 20ms at 48kHz).
@@ -28,6 +29,7 @@ fn sine_frame(frame_index: usize) -> Vec<f32> {
 #[tokio::test]
 async fn two_peer_voice_call_with_mute() {
     init_test_tracing();
+    let mut timer = TestTimer::new("two_peer_voice_call_with_mute");
 
     // Setup peers with media protocol
     let (ep_a, gossip_a, _router_a, incoming_a) = setup_peer_with_media().await;
@@ -40,7 +42,7 @@ async fn two_peer_voice_call_with_mute() {
     .await
     .unwrap();
 
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
 
     let (ep_b, gossip_b, _router_b, incoming_b) = setup_peer_with_media().await;
     let mut channel_b = Channel::join(
@@ -54,14 +56,15 @@ async fn two_peer_voice_call_with_mute() {
     .unwrap();
 
     // Discover peers and establish direct connections
-    wait_for_peers(&mut channel_a, 1, 20).await;
-    wait_for_peers(&mut channel_b, 1, 20).await;
+    wait_for_peers(&mut channel_a, 1, PEER_DISCOVERY_TIMEOUT_SECS).await;
+    wait_for_peers(&mut channel_b, 1, PEER_DISCOVERY_TIMEOUT_SECS).await;
 
     let a_id = channel_a.our_endpoint_id();
     let b_id = channel_b.our_endpoint_id();
 
-    wait_for_connection(&mut channel_a, b_id, 20).await;
-    wait_for_connection(&mut channel_b, a_id, 20).await;
+    wait_for_connection(&mut channel_a, b_id, CONNECTION_TIMEOUT_SECS).await;
+    wait_for_connection(&mut channel_b, a_id, CONNECTION_TIMEOUT_SECS).await;
+    timer.phase("setup_and_connect");
 
     let peer_conn_a = channel_a.connection(&b_id).await.unwrap();
     let peer_conn_b = channel_b.connection(&a_id).await.unwrap();
@@ -107,6 +110,7 @@ async fn two_peer_voice_call_with_mute() {
         .await
         .expect("answerer timed out")
         .expect("answerer panicked");
+    timer.phase("negotiation");
 
     tracing::info!("negotiation complete");
 
@@ -187,15 +191,16 @@ async fn two_peer_voice_call_with_mute() {
         a_recv,
         "bidirectional flow verified"
     );
+    timer.phase("audio_flow");
 
-    // Mute A → no new packets from A
+    // Mute A -> no new packets from A
     let a_sent_before = pipeline_a.metrics().packets_sent.load(Ordering::Relaxed);
     pipeline_a.set_muted(true);
     tokio::time::sleep(Duration::from_secs(1)).await;
     let a_sent_after = pipeline_a.metrics().packets_sent.load(Ordering::Relaxed);
     assert_eq!(a_sent_before, a_sent_after, "no packets sent while muted");
 
-    // Unmute A → packets resume
+    // Unmute A -> packets resume
     pipeline_a.set_muted(false);
     tokio::time::sleep(Duration::from_secs(1)).await;
     let a_sent_resumed = pipeline_a.metrics().packets_sent.load(Ordering::Relaxed);
@@ -203,6 +208,7 @@ async fn two_peer_voice_call_with_mute() {
         a_sent_resumed > a_sent_after,
         "packets should resume after unmute"
     );
+    timer.phase("mute_unmute");
 
     tracing::info!("mute/unmute verified");
 

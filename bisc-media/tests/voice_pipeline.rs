@@ -9,76 +9,11 @@ use std::time::Duration;
 use bisc_media::negotiation::{default_offer, negotiate_as_answerer, negotiate_as_offerer};
 use bisc_media::opus_codec::SAMPLES_PER_FRAME;
 use bisc_media::voice_pipeline::VoicePipeline;
-use bisc_net::channel::{Channel, ChannelEvent};
-use bisc_net::connection::MediaProtocol;
-use bisc_net::endpoint::BiscEndpoint;
-use bisc_net::gossip::GossipHandle;
-use bisc_protocol::types::EndpointId;
+use bisc_net::testing::{
+    init_test_tracing, setup_peer_with_media, wait_for_connection, wait_for_peers, TestTimer,
+    CONNECTION_TIMEOUT_SECS, PEER_DISCOVERY_TIMEOUT_SECS,
+};
 use tokio::sync::mpsc;
-
-fn init_test_tracing() {
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "debug".into()),
-        )
-        .with_test_writer()
-        .try_init();
-}
-
-async fn setup_peer_with_media() -> (
-    BiscEndpoint,
-    GossipHandle,
-    iroh::protocol::Router,
-    mpsc::UnboundedReceiver<iroh::endpoint::Connection>,
-) {
-    let ep = BiscEndpoint::new().await.expect("endpoint creation failed");
-    let (media_proto, incoming_rx) = MediaProtocol::new();
-    let (gossip, router) = GossipHandle::with_protocols(ep.endpoint(), media_proto);
-    (ep, gossip, router, incoming_rx)
-}
-
-async fn wait_for_peers(channel: &mut Channel, expected_count: usize, timeout_secs: u64) {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(timeout_secs);
-    loop {
-        let peers = channel.peers().await;
-        if peers.len() >= expected_count {
-            return;
-        }
-        if tokio::time::Instant::now() > deadline {
-            panic!(
-                "timed out waiting for {} peers, got {}",
-                expected_count,
-                peers.len()
-            );
-        }
-        match tokio::time::timeout(Duration::from_millis(500), channel.recv_event()).await {
-            Ok(Some(_)) => {}
-            _ => {}
-        }
-    }
-}
-
-async fn wait_for_connection(
-    channel: &mut Channel,
-    peer_id: EndpointId,
-    timeout_secs: u64,
-) -> bool {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(timeout_secs);
-    loop {
-        if channel.connection(&peer_id).await.is_some() {
-            return true;
-        }
-        if tokio::time::Instant::now() > deadline {
-            return false;
-        }
-        match tokio::time::timeout(Duration::from_millis(500), channel.recv_event()).await {
-            Ok(Some(ChannelEvent::PeerConnected(id))) if id == peer_id => return true,
-            Ok(Some(_)) => {}
-            _ => {}
-        }
-    }
-}
 
 /// Generate a 440Hz sine wave frame (mono, 960 samples = 20ms at 48kHz).
 fn sine_frame(frame_index: usize) -> Vec<f32> {
@@ -101,10 +36,11 @@ fn sine_frame(frame_index: usize) -> Vec<f32> {
 #[tokio::test]
 async fn voice_pipeline_end_to_end() {
     init_test_tracing();
+    let mut timer = TestTimer::new("voice_pipeline_end_to_end");
 
     // --- Setup: establish channel and connection ---
     let (ep_a, gossip_a, _router_a, incoming_a) = setup_peer_with_media().await;
-    let (mut channel_a, ticket) = Channel::create(
+    let (mut channel_a, ticket) = bisc_net::channel::Channel::create(
         ep_a.endpoint(),
         &gossip_a,
         "alice".to_string(),
@@ -113,10 +49,10 @@ async fn voice_pipeline_end_to_end() {
     .await
     .unwrap();
 
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
 
     let (ep_b, gossip_b, _router_b, incoming_b) = setup_peer_with_media().await;
-    let mut channel_b = Channel::join(
+    let mut channel_b = bisc_net::channel::Channel::join(
         ep_b.endpoint(),
         &gossip_b,
         &ticket,
@@ -126,14 +62,20 @@ async fn voice_pipeline_end_to_end() {
     .await
     .unwrap();
 
-    wait_for_peers(&mut channel_a, 1, 20).await;
-    wait_for_peers(&mut channel_b, 1, 20).await;
+    timer.phase("channel_setup");
+
+    wait_for_peers(&mut channel_a, 1, PEER_DISCOVERY_TIMEOUT_SECS).await;
+    wait_for_peers(&mut channel_b, 1, PEER_DISCOVERY_TIMEOUT_SECS).await;
+
+    timer.phase("peer_discovery");
 
     let a_id = channel_a.our_endpoint_id();
     let b_id = channel_b.our_endpoint_id();
 
-    wait_for_connection(&mut channel_a, b_id, 20).await;
-    wait_for_connection(&mut channel_b, a_id, 20).await;
+    wait_for_connection(&mut channel_a, b_id, CONNECTION_TIMEOUT_SECS).await;
+    wait_for_connection(&mut channel_b, a_id, CONNECTION_TIMEOUT_SECS).await;
+
+    timer.phase("connection_established");
 
     let peer_conn_a = channel_a
         .connection(&b_id)
@@ -191,6 +133,8 @@ async fn voice_pipeline_end_to_end() {
 
     tracing::info!("negotiation complete");
 
+    timer.phase("negotiation");
+
     // --- Create voice pipelines ---
     let conn_a = peer_conn_a.connection().clone();
     let conn_b = peer_conn_b.connection().clone();
@@ -208,6 +152,8 @@ async fn voice_pipeline_end_to_end() {
     pipeline_b.start().await.unwrap();
 
     tracing::info!("voice pipelines started");
+
+    timer.phase("pipeline_setup");
 
     // --- Inject synthetic audio into peer A ---
     // Spawn a producer that sends sine wave frames at ~20ms intervals
@@ -272,6 +218,8 @@ async fn voice_pipeline_end_to_end() {
     );
     tracing::info!("Test 1 passed: packets flow in both directions");
 
+    timer.phase("test1_packet_flow");
+
     // --- Test 2: muting stops packet transmission ---
     let a_sent_before_mute = pipeline_a.metrics().packets_sent.load(Ordering::Relaxed);
     pipeline_a.set_muted(true);
@@ -290,6 +238,8 @@ async fn voice_pipeline_end_to_end() {
         "no packets should be sent while muted"
     );
     tracing::info!("Test 2 passed: muting stops packet transmission");
+
+    timer.phase("test2_mute");
 
     // --- Test 3: unmuting resumes transmission ---
     pipeline_a.set_muted(false);
@@ -311,6 +261,8 @@ async fn voice_pipeline_end_to_end() {
     );
     tracing::info!("Test 3 passed: unmuting resumes transmission");
 
+    timer.phase("test3_unmute");
+
     // --- Test 4: clean shutdown ---
     // Stop audio producers first
     drop(audio_in_a_tx);
@@ -321,6 +273,8 @@ async fn voice_pipeline_end_to_end() {
     pipeline_a.stop().await;
     pipeline_b.stop().await;
     tracing::info!("Test 4 passed: clean shutdown");
+
+    timer.phase("test4_shutdown");
 
     // --- Cleanup ---
     drain_a.abort();
