@@ -16,9 +16,9 @@ Initialize iroh networking with endpoint creation, gossip protocol, and the abil
 
 ## Acceptance Criteria
 
-- [ ] `BiscEndpoint` creates a working iroh endpoint — integration test that creates an endpoint and reads its `NodeId`
-- [ ] Gossip subscribe/unsubscribe works — integration test with two endpoints on localhost that exchange a `PeerAnnounce` message via gossip on a shared topic
-- [ ] `ChannelMessage` broadcast and receive works end-to-end — integration test
-- [ ] Endpoint shuts down cleanly without panics
-- [ ] `cargo clippy -- -D warnings` passes
-- [ ] `cargo fmt --check` passes
+- [x] `BiscEndpoint` creates a working iroh endpoint — integration test that creates an endpoint and reads its `NodeId`
+- [x] Gossip subscribe/unsubscribe works — integration test with two endpoints on localhost that exchange a `PeerAnnounce` message via gossip on a shared topic
+- [x] `ChannelMessage` broadcast and receive works end-to-end — integration test
+- [x] Endpoint shuts down cleanly without panics
+- [x] `cargo clippy -- -D warnings` passes
+- [x] `cargo fmt --check` passes
