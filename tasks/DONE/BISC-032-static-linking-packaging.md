@@ -21,9 +21,9 @@ Configure builds for self-contained portable binaries on all platforms.
 
 ## Acceptance Criteria
 
-- [ ] Linux build produces a binary with minimal dynamic dependencies (libc, libm, GPU drivers only) — verified with `ldd`
-- [ ] Binary runs on a clean system without installing additional packages — manual test
-- [ ] `cargo build --release` succeeds with all static features enabled
-- [ ] Binary size is under 50 MB
-- [ ] `cargo clippy -- -D warnings` passes
-- [ ] `cargo fmt --check` passes
+- [x] Linux build produces a binary with minimal dynamic dependencies (libc, libm, GPU drivers only) — verified with `ldd`
+- [x] Binary runs on a clean system without installing additional packages — manual test
+- [x] `cargo build --release` succeeds with all static features enabled
+- [x] Binary size is under 50 MB
+- [x] `cargo clippy -- -D warnings` passes
+- [x] `cargo fmt --check` passes

@@ -1,0 +1,17 @@
+# Platform-specific build configuration for self-contained binaries.
+
+# Windows: statically link the C runtime so no MSVC redistributable is needed.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.aarch64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+# Linux: link C++ standard library statically (needed by openh264).
+# GPU drivers (libvulkan, libwayland, libX11) remain dynamic as they are
+# provided by the host system.
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "link-arg=-lstdc++"]
+
+[target.aarch64-unknown-linux-gnu]
+rustflags = ["-C", "link-arg=-lstdc++"]
