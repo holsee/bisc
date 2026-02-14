@@ -36,7 +36,7 @@ audiopus_sys = { version = "0.2", features = ["static"] }
 nokhwa = { version = "0.10", features = ["input-native"] }
 openh264 = "0.9"
 scap = "0.1.0-beta.1"
-iced = { version = "0.14", features = ["wgpu"] }
+iced = { version = "0.14", features = ["wgpu", "tokio"] }
 bytemuck = { version = "1", features = ["derive"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
 tempfile = "3"

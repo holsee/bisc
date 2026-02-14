@@ -18,6 +18,7 @@ pub enum Screen {
 
 /// Top-level application message.
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // Variants constructed by networking layer (BISC-036)
 pub enum AppMessage {
     /// Messages from the channel screen.
     Channel(channel::Message),
@@ -80,7 +81,10 @@ pub enum AppAction {
     /// Create a channel with the given display name.
     CreateChannel(String),
     /// Join a channel with ticket + display name.
-    JoinChannel { ticket: String, display_name: String },
+    JoinChannel {
+        ticket: String,
+        display_name: String,
+    },
     /// Leave the current channel.
     LeaveChannel,
     /// Copy text to clipboard.

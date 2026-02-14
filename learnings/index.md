@@ -19,6 +19,10 @@ Discoveries, workarounds, and architectural insights captured during development
 - [nokhwa Requires libclang and V4L2 Dev Headers](media/nokhwa-system-deps.md) — nokhwa input-native uses bindgen needing libclang-dev; made optional behind `video` feature flag
 - [scap Requires D-Bus and PipeWire on Linux](media/scap-system-deps.md) — scap depends on libdbus-sys needing libdbus-1-dev; made optional behind `screen-capture` feature flag
 
+## Iced
+
+- [Verify Application Actually Launches](iced/verify-app-launches.md) — Acceptance criteria saying "app launches" must be verified by running the binary, not just unit tests
+
 ## Platform
 
 - [cpal Requires ALSA Dev Headers on Linux](platform/cpal-alsa-dev-headers.md) — cpal depends on alsa-sys which needs libasound2-dev; made optional behind `audio` feature flag

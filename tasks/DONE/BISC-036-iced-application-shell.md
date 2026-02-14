@@ -54,11 +54,11 @@ Each `AppAction` variant must trigger real work:
 
 ## Acceptance Criteria
 
-- [ ] Running `cargo run` opens an Iced window showing the channel screen
-- [ ] Creating a channel produces a ticket string displayed in the UI
-- [ ] The app compiles and all existing tests still pass
-- [ ] `AppAction::CopyToClipboard` writes to the system clipboard
-- [ ] `AppAction::SaveSettings` persists settings to disk
-- [ ] Graceful shutdown: closing the window drops the endpoint cleanly
-- [ ] `cargo clippy --workspace -- -D warnings` passes
-- [ ] `cargo fmt --all --check` passes
+- [x] Running `cargo run` opens an Iced window showing the channel screen
+- [x] Creating a channel produces a ticket string displayed in the UI
+- [x] The app compiles and all existing tests still pass
+- [x] `AppAction::CopyToClipboard` writes to the system clipboard
+- [x] `AppAction::SaveSettings` persists settings to disk
+- [x] Graceful shutdown: closing the window drops the endpoint cleanly
+- [x] `cargo clippy --workspace -- -D warnings` passes
+- [x] `cargo fmt --all --check` passes
