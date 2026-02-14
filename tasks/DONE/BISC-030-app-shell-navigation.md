@@ -20,10 +20,10 @@ Wire all screens together into the main Iced application with navigation and the
 
 ## Acceptance Criteria
 
-- [ ] Application launches and shows the channel screen — integration test
-- [ ] Creating a channel transitions to the call screen — functional requirement
-- [ ] Leaving a channel transitions back to the channel screen — functional requirement
-- [ ] Settings screen is accessible and changes persist — functional requirement
-- [ ] Application shuts down cleanly (no hanging threads, no panics) — integration test
-- [ ] `cargo clippy -- -D warnings` passes
-- [ ] `cargo fmt --check` passes
+- [x] Application launches and shows the channel screen — integration test
+- [x] Creating a channel transitions to the call screen — functional requirement
+- [x] Leaving a channel transitions back to the channel screen — functional requirement
+- [x] Settings screen is accessible and changes persist — functional requirement
+- [x] Application shuts down cleanly (no hanging threads, no panics) — integration test
+- [x] `cargo clippy -- -D warnings` passes
+- [x] `cargo fmt --check` passes
