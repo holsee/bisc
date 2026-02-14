@@ -18,10 +18,10 @@ Integrate screen/window capture into the video pipeline so a user can share thei
 
 ## Acceptance Criteria
 
-- [ ] Screen share produces `MediaPacket`s with stream_id=2 — integration test
-- [ ] Camera and screen share can run simultaneously (different stream_ids) — integration test
-- [ ] Starting a share broadcasts `MediaStateUpdate` via gossip — integration test
-- [ ] Stopping a share broadcasts updated `MediaStateUpdate` — integration test
-- [ ] If scoped audio is available, audio packets are sent on a separate stream_id — integration test
-- [ ] `cargo clippy -- -D warnings` passes
-- [ ] `cargo fmt --check` passes
+- [x] Screen share produces `MediaPacket`s with stream_id=2 — integration test
+- [x] Camera and screen share can run simultaneously (different stream_ids) — integration test
+- [x] Starting a share broadcasts `MediaStateUpdate` via gossip — integration test
+- [x] Stopping a share broadcasts updated `MediaStateUpdate` — integration test
+- [x] If scoped audio is available, audio packets are sent on a separate stream_id — integration test
+- [x] `cargo clippy -- -D warnings` passes
+- [x] `cargo fmt --check` passes

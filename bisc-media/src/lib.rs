@@ -12,6 +12,8 @@ pub mod negotiation;
 pub mod opus_codec;
 #[cfg(feature = "screen-capture")]
 pub mod screen_capture;
+#[cfg(feature = "video-codec")]
+pub mod share_pipeline;
 pub mod transport;
 #[cfg(feature = "video-codec")]
 pub mod video_codec;
