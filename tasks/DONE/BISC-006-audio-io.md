@@ -19,10 +19,10 @@ Capture audio from the microphone and play audio to the speakers using `cpal`.
 
 ## Acceptance Criteria
 
-- [ ] `list_input_devices()` returns at least one device (or an empty list without panicking) — unit test
-- [ ] `list_output_devices()` returns at least one device — unit test
-- [ ] `AudioInput` can be created, started, and stopped without panic — integration test
-- [ ] `AudioOutput` can be created, started, and stopped without panic — integration test
-- [ ] Audio loopback test: capture from input, feed to output (manual verification, but test that the pipeline runs for 1 second without errors) — integration test
-- [ ] `cargo clippy -- -D warnings` passes
-- [ ] `cargo fmt --check` passes
+- [x] `list_input_devices()` returns at least one device (or an empty list without panicking) — unit test
+- [x] `list_output_devices()` returns at least one device — unit test
+- [x] `AudioInput` can be created, started, and stopped without panic — integration test
+- [x] `AudioOutput` can be created, started, and stopped without panic — integration test
+- [x] Audio loopback test: capture from input, feed to output (manual verification, but test that the pipeline runs for 1 second without errors) — integration test
+- [x] `cargo clippy -- -D warnings` passes
+- [x] `cargo fmt --check` passes

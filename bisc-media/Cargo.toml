@@ -4,10 +4,14 @@ edition.workspace = true
 version.workspace = true
 license.workspace = true
 
+[features]
+audio = ["dep:cpal"]
+
 [dependencies]
 anyhow.workspace = true
 bisc-protocol.workspace = true
 bytes.workspace = true
+cpal = { workspace = true, optional = true }
 serde.workspace = true
 tokio.workspace = true
 tracing.workspace = true
