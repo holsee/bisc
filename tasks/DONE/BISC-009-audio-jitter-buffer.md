@@ -19,11 +19,11 @@ Buffer incoming audio packets to handle network jitter, reorder out-of-order pac
 
 ## Acceptance Criteria
 
-- [ ] Packets inserted in order are returned in order — unit test
-- [ ] Packets inserted out of order are reordered correctly — unit test
-- [ ] Duplicate packets are dropped — unit test
-- [ ] Gap in sequence numbers produces `None` (silence/concealment) at the right time — unit test
-- [ ] Buffer depth adapts: simulate high jitter, verify buffer grows; simulate stable network, verify buffer shrinks — unit test
-- [ ] Statistics are tracked correctly — unit test
-- [ ] `cargo clippy -- -D warnings` passes
-- [ ] `cargo fmt --check` passes
+- [x] Packets inserted in order are returned in order — unit test
+- [x] Packets inserted out of order are reordered correctly — unit test
+- [x] Duplicate packets are dropped — unit test
+- [x] Gap in sequence numbers produces `None` (silence/concealment) at the right time — unit test
+- [x] Buffer depth adapts: simulate high jitter, verify buffer grows; simulate stable network, verify buffer shrinks — unit test
+- [x] Statistics are tracked correctly — unit test
+- [x] `cargo clippy -- -D warnings` passes
+- [x] `cargo fmt --check` passes
