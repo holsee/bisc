@@ -457,6 +457,7 @@ dependencies = [
  "bisc-protocol",
  "bisc-ui",
  "directories",
+ "iroh",
  "serde",
  "tempfile",
  "tokio",
