@@ -7,3 +7,4 @@ pub mod jitter_buffer;
 pub mod negotiation;
 pub mod opus_codec;
 pub mod transport;
+pub mod voice_pipeline;

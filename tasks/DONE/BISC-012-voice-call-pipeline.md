@@ -25,10 +25,10 @@ Wire together audio capture, Opus encode, MediaPacket send, receive, jitter buff
 
 ## Acceptance Criteria
 
-- [ ] Two peers establish a channel, voice pipeline starts automatically after negotiation — integration test
-- [ ] Audio packets flow in both directions (verify packet count > 0 on both sides after 2 seconds) — integration test
-- [ ] Muting stops packet transmission (verify packet count stops increasing) — integration test
-- [ ] Unmuting resumes packet transmission — integration test
-- [ ] Pipeline shuts down cleanly when peer disconnects — integration test
-- [ ] `cargo clippy -- -D warnings` passes
-- [ ] `cargo fmt --check` passes
+- [x] Two peers establish a channel, voice pipeline starts automatically after negotiation — integration test
+- [x] Audio packets flow in both directions (verify packet count > 0 on both sides after 2 seconds) — integration test
+- [x] Muting stops packet transmission (verify packet count stops increasing) — integration test
+- [x] Unmuting resumes packet transmission — integration test
+- [x] Pipeline shuts down cleanly when peer disconnects — integration test
+- [x] `cargo clippy -- -D warnings` passes
+- [x] `cargo fmt --check` passes
