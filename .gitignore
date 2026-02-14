@@ -1,0 +1,31 @@
+# Rust build artifacts
+/target
+**/target
+
+# Cargo.lock is committed for binaries but not libraries
+# We'll keep it since bisc-app is a binary
+# Cargo.lock
+
+# Test artifacts
+test.log
+target/test-logs/
+*.profraw
+*.profdata
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Local configuration
+.env
+.env.local
+
+# Application data (for development)
+/data
+*.db
+*.db-shm
+*.db-wal
