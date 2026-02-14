@@ -21,10 +21,10 @@ When gossip discovers a new peer, establish a direct QUIC connection for media a
 
 ## Acceptance Criteria
 
-- [ ] Two peers in a channel automatically establish a direct QUIC connection after gossip discovery — integration test
-- [ ] Datagrams can be sent and received between connected peers — integration test
-- [ ] A reliable stream can be opened and data exchanged — integration test
-- [ ] When a peer leaves the channel, the connection is closed on both sides — integration test
-- [ ] Connection handles the case where the remote peer is unreachable (relay fallback or error) — integration test
-- [ ] `cargo clippy -- -D warnings` passes
-- [ ] `cargo fmt --check` passes
+- [x] Two peers in a channel automatically establish a direct QUIC connection after gossip discovery — integration test
+- [x] Datagrams can be sent and received between connected peers — integration test
+- [x] A reliable stream can be opened and data exchanged — integration test
+- [x] When a peer leaves the channel, the connection is closed on both sides — integration test
+- [x] Connection handles the case where the remote peer is unreachable (relay fallback or error) — integration test
+- [x] `cargo clippy -- -D warnings` passes
+- [x] `cargo fmt --check` passes

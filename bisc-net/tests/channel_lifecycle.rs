@@ -73,7 +73,7 @@ async fn create_channel_produces_valid_ticket() {
     init_test_tracing();
 
     let (ep, gossip, _router) = setup_peer().await;
-    let (channel, ticket) = Channel::create(ep.endpoint(), &gossip, "alice".to_string())
+    let (channel, ticket) = Channel::create(ep.endpoint(), &gossip, "alice".to_string(), None)
         .await
         .unwrap();
 
@@ -93,16 +93,17 @@ async fn two_peers_see_each_other() {
 
     // Peer A creates channel
     let (ep_a, gossip_a, _router_a) = setup_peer().await;
-    let (mut channel_a, ticket) = Channel::create(ep_a.endpoint(), &gossip_a, "alice".to_string())
-        .await
-        .unwrap();
+    let (mut channel_a, ticket) =
+        Channel::create(ep_a.endpoint(), &gossip_a, "alice".to_string(), None)
+            .await
+            .unwrap();
 
     // Wait for A to have its address ready
     tokio::time::sleep(Duration::from_millis(500)).await;
 
     // Peer B joins via ticket
     let (ep_b, gossip_b, _router_b) = setup_peer().await;
-    let mut channel_b = Channel::join(ep_b.endpoint(), &gossip_b, &ticket, "bob".to_string())
+    let mut channel_b = Channel::join(ep_b.endpoint(), &gossip_b, &ticket, "bob".to_string(), None)
         .await
         .unwrap();
 
@@ -138,15 +139,16 @@ async fn three_peers_all_see_each_other() {
 
     // Peer A creates channel
     let (ep_a, gossip_a, _router_a) = setup_peer().await;
-    let (mut channel_a, ticket) = Channel::create(ep_a.endpoint(), &gossip_a, "alice".to_string())
-        .await
-        .unwrap();
+    let (mut channel_a, ticket) =
+        Channel::create(ep_a.endpoint(), &gossip_a, "alice".to_string(), None)
+            .await
+            .unwrap();
 
     tokio::time::sleep(Duration::from_millis(500)).await;
 
     // Peer B joins
     let (ep_b, gossip_b, _router_b) = setup_peer().await;
-    let mut channel_b = Channel::join(ep_b.endpoint(), &gossip_b, &ticket, "bob".to_string())
+    let mut channel_b = Channel::join(ep_b.endpoint(), &gossip_b, &ticket, "bob".to_string(), None)
         .await
         .unwrap();
 
@@ -156,9 +158,15 @@ async fn three_peers_all_see_each_other() {
 
     // Peer C joins
     let (ep_c, gossip_c, _router_c) = setup_peer().await;
-    let mut channel_c = Channel::join(ep_c.endpoint(), &gossip_c, &ticket, "charlie".to_string())
-        .await
-        .unwrap();
+    let mut channel_c = Channel::join(
+        ep_c.endpoint(),
+        &gossip_c,
+        &ticket,
+        "charlie".to_string(),
+        None,
+    )
+    .await
+    .unwrap();
 
     // All three should see each other (each sees 2 peers)
     wait_for_peers(&mut channel_a, 2, 20).await;
@@ -186,14 +194,15 @@ async fn peer_leave_removes_from_list() {
     init_test_tracing();
 
     let (ep_a, gossip_a, _router_a) = setup_peer().await;
-    let (mut channel_a, ticket) = Channel::create(ep_a.endpoint(), &gossip_a, "alice".to_string())
-        .await
-        .unwrap();
+    let (mut channel_a, ticket) =
+        Channel::create(ep_a.endpoint(), &gossip_a, "alice".to_string(), None)
+            .await
+            .unwrap();
 
     tokio::time::sleep(Duration::from_millis(500)).await;
 
     let (ep_b, gossip_b, _router_b) = setup_peer().await;
-    let mut channel_b = Channel::join(ep_b.endpoint(), &gossip_b, &ticket, "bob".to_string())
+    let mut channel_b = Channel::join(ep_b.endpoint(), &gossip_b, &ticket, "bob".to_string(), None)
         .await
         .unwrap();
 
@@ -226,17 +235,24 @@ async fn ticket_refresh_allows_new_peer_to_join() {
 
     // A creates channel
     let (ep_a, gossip_a, _router_a) = setup_peer().await;
-    let (mut channel_a, _ticket) = Channel::create(ep_a.endpoint(), &gossip_a, "alice".to_string())
-        .await
-        .unwrap();
+    let (mut channel_a, _ticket) =
+        Channel::create(ep_a.endpoint(), &gossip_a, "alice".to_string(), None)
+            .await
+            .unwrap();
 
     tokio::time::sleep(Duration::from_millis(500)).await;
 
     // B joins
     let (ep_b, gossip_b, _router_b) = setup_peer().await;
-    let mut channel_b = Channel::join(ep_b.endpoint(), &gossip_b, &_ticket, "bob".to_string())
-        .await
-        .unwrap();
+    let mut channel_b = Channel::join(
+        ep_b.endpoint(),
+        &gossip_b,
+        &_ticket,
+        "bob".to_string(),
+        None,
+    )
+    .await
+    .unwrap();
 
     wait_for_peers(&mut channel_a, 1, 20).await;
     wait_for_peers(&mut channel_b, 1, 20).await;
@@ -255,6 +271,7 @@ async fn ticket_refresh_allows_new_peer_to_join() {
         &gossip_c,
         &new_ticket,
         "charlie".to_string(),
+        None,
     )
     .await
     .unwrap();
@@ -283,14 +300,15 @@ async fn heartbeat_timeout_removes_peer() {
     init_test_tracing();
 
     let (ep_a, gossip_a, _router_a) = setup_peer().await;
-    let (mut channel_a, ticket) = Channel::create(ep_a.endpoint(), &gossip_a, "alice".to_string())
-        .await
-        .unwrap();
+    let (mut channel_a, ticket) =
+        Channel::create(ep_a.endpoint(), &gossip_a, "alice".to_string(), None)
+            .await
+            .unwrap();
 
     tokio::time::sleep(Duration::from_millis(500)).await;
 
     let (ep_b, gossip_b, _router_b) = setup_peer().await;
-    let mut channel_b = Channel::join(ep_b.endpoint(), &gossip_b, &ticket, "bob".to_string())
+    let mut channel_b = Channel::join(ep_b.endpoint(), &gossip_b, &ticket, "bob".to_string(), None)
         .await
         .unwrap();
 

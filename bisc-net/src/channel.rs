@@ -11,6 +11,7 @@ use bisc_protocol::types::{EndpointAddr, EndpointId};
 use iroh_gossip::proto::TopicId;
 use tokio::sync::{mpsc, watch, RwLock};
 
+use crate::connection::PeerConnection;
 use crate::gossip::{GossipEvent, GossipHandle, TopicSubscription};
 
 /// How often to send heartbeats.
@@ -33,6 +34,8 @@ pub struct PeerInfo {
 pub enum ChannelEvent {
     /// A new peer has joined the channel.
     PeerJoined(PeerInfo),
+    /// A direct QUIC connection has been established to a peer.
+    PeerConnected(EndpointId),
     /// A peer has left the channel (explicit leave or timeout).
     PeerLeft(EndpointId),
     /// A peer's media state has changed.
@@ -62,6 +65,7 @@ pub struct Channel {
     our_iroh_id: iroh::EndpointId,
     display_name: String,
     peers: Arc<RwLock<HashMap<EndpointId, PeerInfo>>>,
+    connections: Arc<RwLock<HashMap<EndpointId, Arc<PeerConnection>>>>,
     event_rx: mpsc::UnboundedReceiver<ChannelEvent>,
     shutdown_tx: watch::Sender<bool>,
     endpoint: iroh::Endpoint,
@@ -71,10 +75,12 @@ impl Channel {
     /// Create a new channel with a random secret.
     ///
     /// Returns the channel and a ticket for others to join.
+    /// Pass `incoming_rx` from `MediaProtocol::new()` to receive incoming connections.
     pub async fn create(
         endpoint: &iroh::Endpoint,
         gossip: &GossipHandle,
         display_name: String,
+        incoming_rx: Option<mpsc::UnboundedReceiver<iroh::endpoint::Connection>>,
     ) -> Result<(Self, BiscTicket)> {
         let secret: [u8; 32] = rand::random();
         let topic = bisc_protocol::ticket::topic_from_secret(&secret);
@@ -109,17 +115,20 @@ impl Channel {
             display_name,
             sub,
             endpoint.clone(),
+            incoming_rx,
         );
 
         Ok((channel, ticket))
     }
 
     /// Join an existing channel using a ticket.
+    /// Pass `incoming_rx` from `MediaProtocol::new()` to receive incoming connections.
     pub async fn join(
         endpoint: &iroh::Endpoint,
         gossip: &GossipHandle,
         ticket: &BiscTicket,
         display_name: String,
+        incoming_rx: Option<mpsc::UnboundedReceiver<iroh::endpoint::Connection>>,
     ) -> Result<Self> {
         let topic = bisc_protocol::ticket::topic_from_secret(&ticket.channel_secret);
         let iroh_topic = TopicId::from_bytes(topic.0);
@@ -162,6 +171,7 @@ impl Channel {
             display_name,
             sub,
             endpoint.clone(),
+            incoming_rx,
         );
 
         Ok(channel)
@@ -182,6 +192,11 @@ impl Channel {
     /// Receive the next channel event.
     pub async fn recv_event(&mut self) -> Option<ChannelEvent> {
         self.event_rx.recv().await
+    }
+
+    /// Get a direct connection to a specific peer, if established.
+    pub async fn connection(&self, peer_id: &EndpointId) -> Option<Arc<PeerConnection>> {
+        self.connections.read().await.get(peer_id).cloned()
     }
 
     /// Get our own endpoint ID in this channel.
@@ -216,6 +231,7 @@ impl Channel {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn spawn_event_loop(
         secret: [u8; 32],
         topic_id: TopicId,
@@ -224,21 +240,28 @@ impl Channel {
         display_name: String,
         sub: TopicSubscription,
         endpoint: iroh::Endpoint,
+        incoming_rx: Option<mpsc::UnboundedReceiver<iroh::endpoint::Connection>>,
     ) -> Self {
         let peers: Arc<RwLock<HashMap<EndpointId, PeerInfo>>> =
+            Arc::new(RwLock::new(HashMap::new()));
+        let connections: Arc<RwLock<HashMap<EndpointId, Arc<PeerConnection>>>> =
             Arc::new(RwLock::new(HashMap::new()));
         let (event_tx, event_rx) = mpsc::unbounded_channel();
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
         let peers_clone = peers.clone();
+        let connections_clone = connections.clone();
 
         tokio::spawn(Self::event_loop(
             our_endpoint_id,
             display_name.clone(),
             sub,
             peers_clone,
+            connections_clone,
             event_tx,
             shutdown_rx,
+            endpoint.clone(),
+            incoming_rx,
         ));
 
         Self {
@@ -248,19 +271,24 @@ impl Channel {
             our_iroh_id,
             display_name,
             peers,
+            connections,
             event_rx,
             shutdown_tx,
             endpoint,
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn event_loop(
         our_id: EndpointId,
         display_name: String,
         sub: TopicSubscription,
         peers: Arc<RwLock<HashMap<EndpointId, PeerInfo>>>,
+        connections: Arc<RwLock<HashMap<EndpointId, Arc<PeerConnection>>>>,
         event_tx: mpsc::UnboundedSender<ChannelEvent>,
         mut shutdown_rx: watch::Receiver<bool>,
+        endpoint: iroh::Endpoint,
+        mut incoming_rx: Option<mpsc::UnboundedReceiver<iroh::endpoint::Connection>>,
     ) {
         let (sender, mut receiver) = sub.into_parts();
         let mut heartbeat_interval = tokio::time::interval(HEARTBEAT_INTERVAL);
@@ -282,7 +310,9 @@ impl Channel {
                                 &display_name,
                                 &sender,
                                 &peers,
+                                &connections,
                                 &event_tx,
+                                &endpoint,
                             ).await;
                         }
                         Ok(None) => {
@@ -295,8 +325,45 @@ impl Channel {
                     }
                 }
 
+                // Accept incoming media connections from the MediaProtocol handler
+                Some(conn) = async {
+                    if let Some(ref mut rx) = incoming_rx {
+                        rx.recv().await
+                    } else {
+                        // No incoming receiver, pend forever
+                        std::future::pending::<Option<iroh::endpoint::Connection>>().await
+                    }
+                } => {
+                    let remote_iroh_id = conn.remote_id();
+                    let peer_endpoint_id = EndpointId(*remote_iroh_id.as_bytes());
+
+                    if peers.read().await.contains_key(&peer_endpoint_id) {
+                        tracing::info!(
+                            peer = ?peer_endpoint_id,
+                            "accepted direct connection from known peer"
+                        );
+                        let peer_conn = Arc::new(PeerConnection::from_connection(conn));
+                        connections.write().await.insert(peer_endpoint_id, peer_conn);
+                        let _ = event_tx.send(ChannelEvent::PeerConnected(peer_endpoint_id));
+                    } else {
+                        tracing::debug!(
+                            peer = ?peer_endpoint_id,
+                            "incoming connection from unknown peer, closing"
+                        );
+                        conn.close(1u8.into(), b"unknown peer");
+                    }
+                }
+
                 _ = shutdown_rx.changed() => {
                     if *shutdown_rx.borrow() {
+                        // Close all peer connections
+                        let conns = connections.read().await;
+                        for (id, conn) in conns.iter() {
+                            tracing::info!(peer = ?id, "closing connection on leave");
+                            conn.close();
+                        }
+                        drop(conns);
+
                         let leave_msg = ChannelMessage::PeerLeave {
                             endpoint_id: our_id,
                         };
@@ -334,6 +401,10 @@ impl Channel {
                     for id in timed_out {
                         tracing::info!(peer = ?id, "peer timed out");
                         peers_write.remove(&id);
+                        // Close connection for timed-out peer
+                        if let Some(conn) = connections.write().await.remove(&id) {
+                            conn.close();
+                        }
                         let _ = event_tx.send(ChannelEvent::PeerLeft(id));
                     }
                 }
@@ -341,13 +412,16 @@ impl Channel {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn handle_gossip_event(
         event: GossipEvent,
         our_id: EndpointId,
         our_display_name: &str,
         sender: &iroh_gossip::api::GossipSender,
         peers: &RwLock<HashMap<EndpointId, PeerInfo>>,
+        connections: &Arc<RwLock<HashMap<EndpointId, Arc<PeerConnection>>>>,
         event_tx: &mpsc::UnboundedSender<ChannelEvent>,
+        endpoint: &iroh::Endpoint,
     ) {
         match event {
             GossipEvent::Message { message, .. } => match message {
@@ -366,8 +440,24 @@ impl Channel {
                         capabilities,
                         last_heartbeat: Instant::now(),
                     };
+                    let is_new = !peers.read().await.contains_key(&endpoint_id);
                     peers.write().await.insert(endpoint_id, info.clone());
                     let _ = event_tx.send(ChannelEvent::PeerJoined(info));
+
+                    // Only connect if this is a new peer, we don't already have a connection,
+                    // and our ID is higher (to avoid duplicate connections from both sides).
+                    // Spawn as a background task to avoid blocking the event loop.
+                    if is_new
+                        && !connections.read().await.contains_key(&endpoint_id)
+                        && our_id.0 > endpoint_id.0
+                    {
+                        let ep = endpoint.clone();
+                        let conns = connections.clone();
+                        let tx = event_tx.clone();
+                        tokio::spawn(async move {
+                            Self::establish_connection(&ep, endpoint_id, &conns, &tx).await;
+                        });
+                    }
                 }
                 ChannelMessage::PeerLeave { endpoint_id } => {
                     if endpoint_id == our_id {
@@ -375,6 +465,10 @@ impl Channel {
                     }
                     tracing::info!(peer = ?endpoint_id, "peer left");
                     peers.write().await.remove(&endpoint_id);
+                    // Close and remove the connection
+                    if let Some(conn) = connections.write().await.remove(&endpoint_id) {
+                        conn.close();
+                    }
                     let _ = event_tx.send(ChannelEvent::PeerLeft(endpoint_id));
                 }
                 ChannelMessage::Heartbeat {
@@ -451,6 +545,38 @@ impl Channel {
                 }
             }
             GossipEvent::NeighborDown(_) | GossipEvent::Lagged => {}
+        }
+    }
+
+    /// Establish a direct QUIC connection to a peer.
+    async fn establish_connection(
+        endpoint: &iroh::Endpoint,
+        peer_endpoint_id: EndpointId,
+        connections: &Arc<RwLock<HashMap<EndpointId, Arc<PeerConnection>>>>,
+        event_tx: &mpsc::UnboundedSender<ChannelEvent>,
+    ) {
+        let remote_iroh_id = match iroh::EndpointId::from_bytes(&peer_endpoint_id.0) {
+            Ok(id) => id,
+            Err(e) => {
+                tracing::warn!(error = %e, "invalid peer endpoint id for connection");
+                return;
+            }
+        };
+
+        match PeerConnection::connect(endpoint, remote_iroh_id, crate::endpoint::MEDIA_ALPN).await {
+            Ok(conn) => {
+                tracing::info!(peer = ?peer_endpoint_id, "direct connection established");
+                let conn = Arc::new(conn);
+                connections.write().await.insert(peer_endpoint_id, conn);
+                let _ = event_tx.send(ChannelEvent::PeerConnected(peer_endpoint_id));
+            }
+            Err(e) => {
+                tracing::warn!(
+                    peer = ?peer_endpoint_id,
+                    error = %e,
+                    "failed to establish direct connection"
+                );
+            }
         }
     }
 }
