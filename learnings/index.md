@@ -12,6 +12,10 @@ Discoveries, workarounds, and architectural insights captured during development
 - [iroh Router Owns the Accept Loop](iroh/router-owns-accept-loop.md) — Cannot call endpoint.accept() when a Router is active; must implement ProtocolHandler and register with the Router
 - [Spawn Connection Attempts to Avoid Blocking the Event Loop](iroh/spawn-connection-attempts.md) — QUIC connection setup can block a tokio::select! event loop; spawn as background tasks instead
 
+## Media
+
+- [Opus Codec Startup Distortion](media/opus-codec-startup-distortion.md) — First few Opus frames have high distortion; VoIP mode filters pure tones; audiopus_sys static feature builds from source
+
 ## Platform
 
 - [cpal Requires ALSA Dev Headers on Linux](platform/cpal-alsa-dev-headers.md) — cpal depends on alsa-sys which needs libasound2-dev; made optional behind `audio` feature flag

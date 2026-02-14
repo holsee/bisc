@@ -18,10 +18,10 @@ Encode raw audio samples to Opus and decode back.
 
 ## Acceptance Criteria
 
-- [ ] Encode a 20ms frame of silence (960 zeros) and get valid Opus bytes — unit test
-- [ ] Decode the encoded bytes back and get 960 samples — unit test
-- [ ] Round-trip: encode a known waveform (sine wave), decode, verify output is similar (not bit-exact due to lossy compression, but within tolerance) — unit test
-- [ ] Bitrate change takes effect (encode at 16kbps produces smaller output than 128kbps) — unit test
-- [ ] Encoder and decoder handle stereo — unit test
-- [ ] `cargo clippy -- -D warnings` passes
-- [ ] `cargo fmt --check` passes
+- [x] Encode a 20ms frame of silence (960 zeros) and get valid Opus bytes — unit test
+- [x] Decode the encoded bytes back and get 960 samples — unit test
+- [x] Round-trip: encode a known waveform (sine wave), decode, verify output is similar (not bit-exact due to lossy compression, but within tolerance) — unit test
+- [x] Bitrate change takes effect (encode at 16kbps produces smaller output than 128kbps) — unit test
+- [x] Encoder and decoder handle stereo — unit test
+- [x] `cargo clippy -- -D warnings` passes
+- [x] `cargo fmt --check` passes

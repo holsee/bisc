@@ -31,6 +31,8 @@ iroh-gossip = "0.96"
 n0-future = "0.3"
 rand = "0.9"
 cpal = "0.15"
+opus = "0.3"
+audiopus_sys = { version = "0.2", features = ["static"] }
 
 # Internal crates
 bisc-protocol = { path = "bisc-protocol" }

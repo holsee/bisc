@@ -2,3 +2,4 @@
 
 #[cfg(feature = "audio")]
 pub mod audio_io;
+pub mod opus_codec;

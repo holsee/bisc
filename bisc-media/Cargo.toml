@@ -12,6 +12,7 @@ anyhow.workspace = true
 bisc-protocol.workspace = true
 bytes.workspace = true
 cpal = { workspace = true, optional = true }
+opus.workspace = true
 serde.workspace = true
 tokio.workspace = true
 tracing.workspace = true
