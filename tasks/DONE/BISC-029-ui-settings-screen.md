@@ -23,10 +23,10 @@ Settings screen for configuring preferences.
 
 ## Acceptance Criteria
 
-- [ ] Screen renders with current settings loaded — integration test
-- [ ] Changing display name and saving persists the change — unit test
-- [ ] Audio device dropdowns populate from available devices — functional requirement
-- [ ] Quality selectors update the settings — unit test on state
-- [ ] Save button writes settings to disk — unit test
-- [ ] `cargo clippy -- -D warnings` passes
-- [ ] `cargo fmt --check` passes
+- [x] Screen renders with current settings loaded — integration test
+- [x] Changing display name and saving persists the change — unit test
+- [x] Audio device dropdowns populate from available devices — functional requirement
+- [x] Quality selectors update the settings — unit test on state
+- [x] Save button writes settings to disk — unit test
+- [x] `cargo clippy -- -D warnings` passes
+- [x] `cargo fmt --check` passes
