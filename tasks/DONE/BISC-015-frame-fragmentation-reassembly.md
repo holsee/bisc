@@ -20,11 +20,11 @@ Fragment large encoded video frames into datagram-sized `MediaPacket`s and reass
 
 ## Acceptance Criteria
 
-- [ ] Small frame (< max_payload_size) produces exactly 1 fragment — unit test
-- [ ] Large frame produces correct number of fragments (ceil(data_len / max_payload)) — unit test
-- [ ] Fragments reassemble into the original data — unit test
-- [ ] Fragments arriving out of order still reassemble correctly — unit test
-- [ ] Incomplete frame (missing fragment) is discarded after timeout — unit test
-- [ ] Duplicate fragments don't corrupt the output — unit test
-- [ ] `cargo clippy -- -D warnings` passes
-- [ ] `cargo fmt --check` passes
+- [x] Small frame (< max_payload_size) produces exactly 1 fragment — unit test
+- [x] Large frame produces correct number of fragments (ceil(data_len / max_payload)) — unit test
+- [x] Fragments reassemble into the original data — unit test
+- [x] Fragments arriving out of order still reassemble correctly — unit test
+- [x] Incomplete frame (missing fragment) is discarded after timeout — unit test
+- [x] Duplicate fragments don't corrupt the output — unit test
+- [x] `cargo clippy -- -D warnings` passes
+- [x] `cargo fmt --check` passes
