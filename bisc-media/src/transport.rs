@@ -32,8 +32,15 @@ pub struct TransportMetrics {
     pub bytes_received: AtomicU64,
 }
 
+impl Default for TransportMetrics {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TransportMetrics {
-    fn new() -> Self {
+    /// Create new zeroed metrics.
+    pub fn new() -> Self {
         Self {
             packets_sent: AtomicU64::new(0),
             packets_received: AtomicU64::new(0),

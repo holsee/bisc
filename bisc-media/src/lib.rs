@@ -2,6 +2,7 @@
 
 #[cfg(feature = "audio")]
 pub mod audio_io;
+pub mod control;
 pub mod jitter_buffer;
 pub mod negotiation;
 pub mod opus_codec;

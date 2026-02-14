@@ -27,8 +27,15 @@ pub struct JitterStats {
     pub packets_lost: AtomicU64,
 }
 
+impl Default for JitterStats {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl JitterStats {
-    fn new() -> Self {
+    /// Create new zeroed stats.
+    pub fn new() -> Self {
         Self {
             packets_received: AtomicU64::new(0),
             packets_played: AtomicU64::new(0),
