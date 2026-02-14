@@ -20,10 +20,10 @@ File sharing panel: view shared files, click to download, see download progress.
 
 ## Acceptance Criteria
 
-- [ ] Panel renders with empty file list — integration test
-- [ ] `FileAnnounce` adds file to the list — unit test on state
-- [ ] Download button emits `RequestDownload` — unit test
-- [ ] Progress updates as chunks arrive — unit test on state
-- [ ] Completed files show as "Downloaded" — unit test on state
-- [ ] `cargo clippy -- -D warnings` passes
-- [ ] `cargo fmt --check` passes
+- [x] Panel renders with empty file list — integration test
+- [x] `FileAnnounce` adds file to the list — unit test on state
+- [x] Download button emits `RequestDownload` — unit test
+- [x] Progress updates as chunks arrive — unit test on state
+- [x] Completed files show as "Downloaded" — unit test on state
+- [x] `cargo clippy -- -D warnings` passes
+- [x] `cargo fmt --check` passes
