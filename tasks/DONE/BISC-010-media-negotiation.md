@@ -17,9 +17,9 @@ When two peers connect, exchange `MediaOffer`/`MediaAnswer` over a reliable stre
 
 ## Acceptance Criteria
 
-- [ ] Two peers negotiate successfully with matching capabilities — integration test
-- [ ] Negotiation picks the lower resolution when peers differ — unit test
-- [ ] Negotiation fails gracefully when no common codec exists — unit test (returns error, doesn't panic)
-- [ ] Length-prefixed messages are correctly framed over the reliable stream — unit test
-- [ ] `cargo clippy -- -D warnings` passes
-- [ ] `cargo fmt --check` passes
+- [x] Two peers negotiate successfully with matching capabilities — integration test
+- [x] Negotiation picks the lower resolution when peers differ — unit test
+- [x] Negotiation fails gracefully when no common codec exists — unit test (returns error, doesn't panic)
+- [x] Length-prefixed messages are correctly framed over the reliable stream — unit test
+- [x] `cargo clippy -- -D warnings` passes
+- [x] `cargo fmt --check` passes
