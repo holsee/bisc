@@ -18,6 +18,13 @@ use crate::jitter_buffer::JitterBuffer;
 use crate::opus_codec::{OpusDecoder, OpusEncoder, SAMPLES_PER_FRAME};
 use crate::transport::MediaTransport;
 
+/// Commands that can be sent to the voice send loop.
+#[derive(Debug)]
+pub enum VoiceCommand {
+    /// Change the encoder's target bitrate (bps).
+    SetBitrate(u32),
+}
+
 /// Metrics exposed for observability and test assertions.
 pub struct PipelineMetrics {
     pub frames_encoded: AtomicU64,
@@ -52,6 +59,7 @@ pub struct VoicePipeline {
     muted: Arc<AtomicBool>,
     /// Volume gain stored as `f32::to_bits()` in an `AtomicU32`.
     volume_bits: Arc<AtomicU32>,
+    command_tx: mpsc::UnboundedSender<VoiceCommand>,
     metrics: Arc<PipelineMetrics>,
     shutdown_tx: watch::Sender<bool>,
     shutdown_rx: watch::Receiver<bool>,
@@ -70,6 +78,7 @@ impl VoicePipeline {
         audio_out_tx: mpsc::UnboundedSender<Vec<f32>>,
     ) -> Result<Self> {
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
+        let (command_tx, _command_rx) = mpsc::unbounded_channel();
 
         tracing::info!(
             peer = %connection.remote_id(),
@@ -82,6 +91,7 @@ impl VoicePipeline {
             audio_out_tx: Some(audio_out_tx),
             muted: Arc::new(AtomicBool::new(false)),
             volume_bits: Arc::new(AtomicU32::new(1.0_f32.to_bits())),
+            command_tx,
             metrics: Arc::new(PipelineMetrics::new()),
             shutdown_tx,
             shutdown_rx,
@@ -101,10 +111,15 @@ impl VoicePipeline {
             .take()
             .context("pipeline already started (audio_out_tx consumed)")?;
 
+        // Create a fresh command channel for the send loop
+        let (command_tx, command_rx) = mpsc::unbounded_channel();
+        self.command_tx = command_tx;
+
         // --- Send task ---
         let send_handle = tokio::spawn(send_loop(
             self.connection.clone(),
             audio_in_rx,
+            command_rx,
             Arc::clone(&self.muted),
             Arc::clone(&self.metrics),
             self.shutdown_rx.clone(),
@@ -162,6 +177,11 @@ impl VoicePipeline {
         f32::from_bits(self.volume_bits.load(Ordering::Relaxed))
     }
 
+    /// Change the encoder's target bitrate.
+    pub fn set_bitrate(&self, bps: u32) {
+        let _ = self.command_tx.send(VoiceCommand::SetBitrate(bps));
+    }
+
     /// Get the pipeline metrics.
     pub fn metrics(&self) -> &Arc<PipelineMetrics> {
         &self.metrics
@@ -172,6 +192,7 @@ impl VoicePipeline {
 async fn send_loop(
     connection: iroh::endpoint::Connection,
     mut audio_in_rx: mpsc::UnboundedReceiver<Vec<f32>>,
+    mut command_rx: mpsc::UnboundedReceiver<VoiceCommand>,
     muted: Arc<AtomicBool>,
     metrics: Arc<PipelineMetrics>,
     mut shutdown: watch::Receiver<bool>,
@@ -195,6 +216,19 @@ async fn send_loop(
                 if result.is_err() || *shutdown.borrow() {
                     tracing::debug!("send loop shutdown");
                     return;
+                }
+            }
+            cmd = command_rx.recv() => {
+                match cmd {
+                    Some(VoiceCommand::SetBitrate(bps)) => {
+                        if let Err(e) = encoder.set_bitrate(bps) {
+                            tracing::warn!(error = %e, bps, "failed to set voice bitrate");
+                        }
+                    }
+                    None => {
+                        tracing::debug!("voice command channel closed");
+                        return;
+                    }
                 }
             }
             frame = audio_in_rx.recv() => {

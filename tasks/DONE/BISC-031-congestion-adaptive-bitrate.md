@@ -19,10 +19,10 @@ Measure network conditions and automatically adjust media quality.
 
 ## Acceptance Criteria
 
-- [ ] High loss rate produces lower bitrate recommendation — unit test
-- [ ] Sustained low loss rate gradually increases bitrate — unit test
-- [ ] Bitrate stays within min/max bounds — unit test
-- [ ] RTT and jitter are tracked correctly from `ReceiverReport` data — unit test
-- [ ] Encoder bitrate actually changes when recommendation is applied — integration test
-- [ ] `cargo clippy -- -D warnings` passes
-- [ ] `cargo fmt --check` passes
+- [x] High loss rate produces lower bitrate recommendation — unit test
+- [x] Sustained low loss rate gradually increases bitrate — unit test
+- [x] Bitrate stays within min/max bounds — unit test
+- [x] RTT and jitter are tracked correctly from `ReceiverReport` data — unit test
+- [x] Encoder bitrate actually changes when recommendation is applied — integration test
+- [x] `cargo clippy -- -D warnings` passes
+- [x] `cargo fmt --check` passes

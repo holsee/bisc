@@ -5,6 +5,7 @@ pub mod app_audio;
 pub mod audio_io;
 #[cfg(feature = "video")]
 pub mod camera;
+pub mod congestion;
 pub mod control;
 pub mod fragmentation;
 pub mod jitter_buffer;
