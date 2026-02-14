@@ -20,11 +20,11 @@ Define all shared message types used across crates for gossip, media, file trans
 
 ## Acceptance Criteria
 
-- [ ] All types compile and derive required traits
-- [ ] `BiscTicket` round-trips through `to_string()` / `from_str()` — unit test
-- [ ] `topic_from_secret()` is deterministic — same secret always produces same `TopicId` — unit test
-- [ ] All `ChannelMessage` variants round-trip through `postcard` serialize/deserialize — unit test
-- [ ] All `MediaPacket` variants round-trip through `postcard` — unit test
-- [ ] All `FileRequest`/`FileChunk` types round-trip — unit test
-- [ ] `cargo clippy -- -D warnings` passes
-- [ ] `cargo fmt --check` passes
+- [x] All types compile and derive required traits
+- [x] `BiscTicket` round-trips through `to_string()` / `from_str()` — unit test
+- [x] `topic_from_secret()` is deterministic — same secret always produces same `TopicId` — unit test
+- [x] All `ChannelMessage` variants round-trip through `postcard` serialize/deserialize — unit test
+- [x] All `MediaPacket` variants round-trip through `postcard` — unit test
+- [x] All `FileRequest`/`FileChunk` types round-trip — unit test
+- [x] `cargo clippy -- -D warnings` passes
+- [x] `cargo fmt --check` passes

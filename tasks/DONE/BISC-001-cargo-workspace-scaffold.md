@@ -19,9 +19,9 @@ Set up the multi-crate workspace with shared dependencies and build configuratio
 
 ## Acceptance Criteria
 
-- [ ] `cargo build` succeeds for the entire workspace
-- [ ] `cargo test` runs (even if no tests yet) without errors
-- [ ] `cargo fmt --check` passes
-- [ ] `cargo clippy -- -D warnings` passes
-- [ ] Each crate can be built independently (`cargo build -p bisc-net`, etc.)
-- [ ] `bisc-app` binary runs and exits cleanly
+- [x] `cargo build` succeeds for the entire workspace
+- [x] `cargo test` runs (even if no tests yet) without errors
+- [x] `cargo fmt --check` passes
+- [x] `cargo clippy -- -D warnings` passes
+- [x] Each crate can be built independently (`cargo build -p bisc-net`, etc.)
+- [x] `bisc-app` binary runs and exits cleanly

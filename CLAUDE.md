@@ -55,6 +55,7 @@ Delete `test.log` after review. Do not commit it.
 
 - Re-read the task file's **Acceptance Criteria** section
 - Confirm every checkbox item is satisfied
+- **Tick each checkbox** in the task file (change `- [ ]` to `- [x]`) as each criterion is verified
 - If a criterion requires an integration test, ensure the test exists and passes
 - If a criterion is a functional requirement (not testable in CI), verify it manually or document how it was verified
 
