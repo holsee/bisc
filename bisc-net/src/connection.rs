@@ -7,6 +7,7 @@ use iroh::protocol::{AcceptError, ProtocolHandler};
 use tokio::sync::mpsc;
 
 use crate::endpoint::MEDIA_ALPN;
+use crate::transport::{Transport, TransportMetrics};
 
 /// State of a peer connection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -55,6 +56,7 @@ impl ProtocolHandler for MediaProtocol {
 pub struct PeerConnection {
     connection: Connection,
     remote_id: iroh::EndpointId,
+    metrics: TransportMetrics,
 }
 
 impl PeerConnection {
@@ -70,6 +72,7 @@ impl PeerConnection {
         Ok(Self {
             connection,
             remote_id,
+            metrics: TransportMetrics::new(),
         })
     }
 
@@ -79,6 +82,7 @@ impl PeerConnection {
         Self {
             connection,
             remote_id,
+            metrics: TransportMetrics::new(),
         }
     }
 
@@ -156,6 +160,45 @@ impl PeerConnection {
     /// Get the round-trip time to the peer on the given path.
     pub fn rtt(&self, path_id: iroh::endpoint::PathId) -> Option<std::time::Duration> {
         self.connection.rtt(path_id)
+    }
+}
+
+impl Transport for PeerConnection {
+    type SendStream = iroh::endpoint::SendStream;
+    type RecvStream = iroh::endpoint::RecvStream;
+
+    async fn send_datagram(&self, data: Bytes) -> Result<()> {
+        let len = data.len();
+        self.connection.send_datagram(data)?;
+        self.metrics.record_datagram_sent(len);
+        Ok(())
+    }
+
+    async fn recv_datagram(&self) -> Result<Bytes> {
+        let data = self.connection.read_datagram().await?;
+        self.metrics.record_datagram_received(data.len());
+        Ok(data)
+    }
+
+    async fn open_bi_stream(
+        &self,
+    ) -> Result<(iroh::endpoint::SendStream, iroh::endpoint::RecvStream)> {
+        tracing::debug!(peer = %self.remote_id, "opening bi stream via Transport trait");
+        let (send, recv) = self.connection.open_bi().await?;
+        self.metrics.record_stream_opened();
+        Ok((send, recv))
+    }
+
+    async fn accept_bi_stream(
+        &self,
+    ) -> Result<(iroh::endpoint::SendStream, iroh::endpoint::RecvStream)> {
+        tracing::debug!(peer = %self.remote_id, "accepting bi stream via Transport trait");
+        let (send, recv) = self.connection.accept_bi().await?;
+        Ok((send, recv))
+    }
+
+    fn transport_metrics(&self) -> &TransportMetrics {
+        &self.metrics
     }
 }
 

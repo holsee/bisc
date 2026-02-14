@@ -57,16 +57,16 @@ This is foundational infrastructure — once complete, all subsequent integratio
 
 ## Acceptance Criteria
 
-- [ ] `SimNetwork` can create 2+ peers and they can exchange datagrams — unit test
-- [ ] `set_latency()` causes measurable delay in datagram delivery — unit test (measure round-trip time)
-- [ ] `set_loss_rate(0.5)` causes approximately 50% of datagrams to be dropped (within tolerance) — unit test (send 1000 packets, verify ~500 received)
-- [ ] `set_loss_rate(0.0)` causes zero packet loss — unit test
-- [ ] `disconnect()` stops all datagram delivery to/from that peer — unit test
-- [ ] `reconnect()` resumes delivery — unit test
-- [ ] Reliable streams deliver all data in order regardless of loss/latency settings — unit test
-- [ ] `PeerMetrics` accurately tracks packets sent, received, and lost — unit test
-- [ ] `Transport` trait is implemented by both `PeerConnection` (real) and `SimTransport` (simulated) — build test
-- [ ] Existing `PeerConnection` code compiles against the `Transport` trait without functional changes — build test
-- [ ] A seeded RNG produces deterministic loss/jitter patterns — unit test (same seed = same results)
-- [ ] `cargo clippy -- -D warnings` passes
-- [ ] `cargo fmt --check` passes
+- [x] `SimNetwork` can create 2+ peers and they can exchange datagrams — unit test
+- [x] `set_latency()` causes measurable delay in datagram delivery — unit test (measure round-trip time)
+- [x] `set_loss_rate(0.5)` causes approximately 50% of datagrams to be dropped (within tolerance) — unit test (send 1000 packets, verify ~500 received)
+- [x] `set_loss_rate(0.0)` causes zero packet loss — unit test
+- [x] `disconnect()` stops all datagram delivery to/from that peer — unit test
+- [x] `reconnect()` resumes delivery — unit test
+- [x] Reliable streams deliver all data in order regardless of loss/latency settings — unit test
+- [x] `PeerMetrics` accurately tracks packets sent, received, and lost — unit test
+- [x] `Transport` trait is implemented by both `PeerConnection` (real) and `SimTransport` (simulated) — build test
+- [x] Existing `PeerConnection` code compiles against the `Transport` trait without functional changes — build test
+- [x] A seeded RNG produces deterministic loss/jitter patterns — unit test (same seed = same results)
+- [x] `cargo clippy -- -D warnings` passes
+- [x] `cargo fmt --check` passes
