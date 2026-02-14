@@ -20,10 +20,10 @@ The initial screen: enter a display name, create a new channel, or join an exist
 
 ## Acceptance Criteria
 
-- [ ] Screen renders without panic — integration test
-- [ ] Create button triggers `Message::CreateChannel` — unit test on message handling
-- [ ] Join with empty ticket shows validation error — unit test
-- [ ] Join with invalid ticket shows error message — unit test
-- [ ] Ticket is displayed and copyable after channel creation — functional requirement
-- [ ] `cargo clippy -- -D warnings` passes
-- [ ] `cargo fmt --check` passes
+- [x] Screen renders without panic — integration test
+- [x] Create button triggers `Message::CreateChannel` — unit test on message handling
+- [x] Join with empty ticket shows validation error — unit test
+- [x] Join with invalid ticket shows error message — unit test
+- [x] Ticket is displayed and copyable after channel creation — functional requirement
+- [x] `cargo clippy -- -D warnings` passes
+- [x] `cargo fmt --check` passes
