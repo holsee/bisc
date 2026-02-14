@@ -21,10 +21,10 @@ Arrange multiple `VideoSurface` widgets in a responsive grid based on peer count
 
 ## Acceptance Criteria
 
-- [ ] `grid_layout(1, ...)` returns 1 rectangle filling the bounds — unit test
-- [ ] `grid_layout(2, ...)` returns 2 equal rectangles side by side — unit test
-- [ ] `grid_layout(4, ...)` returns 4 equal rectangles in a 2x2 grid — unit test
-- [ ] `grid_layout(5, ...)` arranges in a 2x3 or 3x2 grid — unit test
-- [ ] All rectangles fit within bounds (no overflow) — unit test for N=1..9
-- [ ] `cargo clippy -- -D warnings` passes
-- [ ] `cargo fmt --check` passes
+- [x] `grid_layout(1, ...)` returns 1 rectangle filling the bounds — unit test
+- [x] `grid_layout(2, ...)` returns 2 equal rectangles side by side — unit test
+- [x] `grid_layout(4, ...)` returns 4 equal rectangles in a 2x2 grid — unit test
+- [x] `grid_layout(5, ...)` arranges in a 2x3 or 3x2 grid — unit test
+- [x] All rectangles fit within bounds (no overflow) — unit test for N=1..9
+- [x] `cargo clippy -- -D warnings` passes
+- [x] `cargo fmt --check` passes
