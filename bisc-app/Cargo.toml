@@ -1,0 +1,23 @@
+[package]
+name = "bisc-app"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "bisc"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+bisc-files.workspace = true
+bisc-media.workspace = true
+bisc-net.workspace = true
+bisc-protocol.workspace = true
+bisc-ui.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }

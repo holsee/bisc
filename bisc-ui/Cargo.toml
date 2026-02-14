@@ -1,0 +1,12 @@
+[package]
+name = "bisc-ui"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+bisc-protocol.workspace = true
+tracing.workspace = true
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }

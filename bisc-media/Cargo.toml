@@ -1,0 +1,19 @@
+[package]
+name = "bisc-media"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+bisc-protocol.workspace = true
+bytes.workspace = true
+serde.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tracing-subscriber.workspace = true
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
