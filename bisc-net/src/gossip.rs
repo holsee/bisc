@@ -20,6 +20,18 @@ pub struct TopicSubscription {
     receiver: iroh_gossip::api::GossipReceiver,
 }
 
+impl TopicSubscription {
+    /// Split into separate sender and receiver.
+    pub fn into_parts(
+        self,
+    ) -> (
+        iroh_gossip::api::GossipSender,
+        iroh_gossip::api::GossipReceiver,
+    ) {
+        (self.sender, self.receiver)
+    }
+}
+
 impl GossipHandle {
     /// Create a new gossip handle and register it with a router.
     ///

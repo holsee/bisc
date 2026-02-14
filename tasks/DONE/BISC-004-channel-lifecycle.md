@@ -21,11 +21,11 @@ Implement the full channel lifecycle: creating a channel, generating a ticket, j
 
 ## Acceptance Criteria
 
-- [ ] Create channel produces a valid `BiscTicket` that round-trips — unit test
-- [ ] Two peers: A creates channel, B joins via ticket, both see each other in peer list — integration test
-- [ ] Three peers: A creates, B joins, C joins — all three see each other — integration test
-- [ ] Peer leave: B leaves, A and C see B removed from peer list — integration test
-- [ ] Ticket refresh: A leaves, C generates new ticket, D joins via C's ticket — integration test
-- [ ] Heartbeat timeout: peer that stops sending heartbeats is removed after timeout — integration test
-- [ ] `cargo clippy -- -D warnings` passes
-- [ ] `cargo fmt --check` passes
+- [x] Create channel produces a valid `BiscTicket` that round-trips — unit test
+- [x] Two peers: A creates channel, B joins via ticket, both see each other in peer list — integration test
+- [x] Three peers: A creates, B joins, C joins — all three see each other — integration test
+- [x] Peer leave: B leaves, A and C see B removed from peer list — integration test
+- [x] Ticket refresh: A leaves, C generates new ticket, D joins via C's ticket — integration test
+- [x] Heartbeat timeout: peer that stops sending heartbeats is removed after timeout — integration test
+- [x] `cargo clippy -- -D warnings` passes
+- [x] `cargo fmt --check` passes

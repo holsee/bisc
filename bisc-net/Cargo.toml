@@ -12,6 +12,7 @@ iroh.workspace = true
 iroh-gossip.workspace = true
 n0-future.workspace = true
 postcard.workspace = true
+rand.workspace = true
 serde.workspace = true
 tokio.workspace = true
 tracing.workspace = true
