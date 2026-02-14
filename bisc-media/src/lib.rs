@@ -2,6 +2,8 @@
 
 #[cfg(feature = "audio")]
 pub mod audio_io;
+#[cfg(feature = "video")]
+pub mod camera;
 pub mod control;
 pub mod jitter_buffer;
 pub mod negotiation;

@@ -19,9 +19,9 @@ Capture video frames from the system camera.
 
 ## Acceptance Criteria
 
-- [ ] `list_cameras()` runs without panic (returns empty list if no camera) — unit test
-- [ ] `Camera` can be opened and closed without panic (skip test if no camera available) — integration test
-- [ ] Captured `RawFrame` has correct width/height matching the config — integration test
-- [ ] Camera can be stopped and restarted — integration test
-- [ ] `cargo clippy -- -D warnings` passes
-- [ ] `cargo fmt --check` passes
+- [x] `list_cameras()` runs without panic (returns empty list if no camera) — unit test
+- [x] `Camera` can be opened and closed without panic (skip test if no camera available) — integration test
+- [x] Captured `RawFrame` has correct width/height matching the config — integration test
+- [x] Camera can be stopped and restarted — integration test
+- [x] `cargo clippy -- -D warnings` passes
+- [x] `cargo fmt --check` passes
