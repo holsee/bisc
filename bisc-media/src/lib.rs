@@ -12,5 +12,7 @@ pub mod opus_codec;
 pub mod transport;
 #[cfg(feature = "video-codec")]
 pub mod video_codec;
+#[cfg(feature = "video-codec")]
+pub mod video_pipeline;
 pub mod video_types;
 pub mod voice_pipeline;

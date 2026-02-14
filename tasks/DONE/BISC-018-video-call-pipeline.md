@@ -26,11 +26,11 @@ Wire together camera capture, H264 encode, fragmentation, datagram transport, re
 
 ## Acceptance Criteria
 
-- [ ] Two peers exchange video frames (verify fragment packet count > 0 on both sides after 3 seconds) — integration test
-- [ ] Turning camera off stops packet transmission — integration test
-- [ ] Turning camera on resumes transmission — integration test
-- [ ] Keyframe request triggers an IDR frame — integration test
-- [ ] Quality change adjusts encoder bitrate — integration test
-- [ ] Pipeline shuts down cleanly when peer disconnects — integration test
-- [ ] `cargo clippy -- -D warnings` passes
-- [ ] `cargo fmt --check` passes
+- [x] Two peers exchange video frames (verify fragment packet count > 0 on both sides after 3 seconds) — integration test
+- [x] Turning camera off stops packet transmission — integration test
+- [x] Turning camera on resumes transmission — integration test
+- [x] Keyframe request triggers an IDR frame — integration test
+- [x] Quality change adjusts encoder bitrate — integration test
+- [x] Pipeline shuts down cleanly when peer disconnects — integration test
+- [x] `cargo clippy -- -D warnings` passes
+- [x] `cargo fmt --check` passes
