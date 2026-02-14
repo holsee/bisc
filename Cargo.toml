@@ -38,6 +38,8 @@ openh264 = "0.9"
 scap = "0.1.0-beta.1"
 iced = { version = "0.14", features = ["wgpu"] }
 bytemuck = { version = "1", features = ["derive"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+tempfile = "3"
 
 # Internal crates
 bisc-protocol = { path = "bisc-protocol" }

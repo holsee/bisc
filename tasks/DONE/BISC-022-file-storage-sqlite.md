@@ -24,11 +24,11 @@ Manage local file storage directory and track file metadata in SQLite.
 
 ## Acceptance Criteria
 
-- [ ] `FileStore::new()` creates directory and database — unit test (in temp dir)
-- [ ] `add_file()` + `get_file()` round-trip — unit test
-- [ ] `set_chunk_received()` + `get_chunk_bitfield()` correctly tracks chunks — unit test
-- [ ] `is_complete()` returns true only when all chunks are received — unit test
-- [ ] `list_files()` returns all added files — unit test
-- [ ] Database persists across `FileStore` instances (close and reopen) — unit test
-- [ ] `cargo clippy -- -D warnings` passes
-- [ ] `cargo fmt --check` passes
+- [x] `FileStore::new()` creates directory and database — unit test (in temp dir)
+- [x] `add_file()` + `get_file()` round-trip — unit test
+- [x] `set_chunk_received()` + `get_chunk_bitfield()` correctly tracks chunks — unit test
+- [x] `is_complete()` returns true only when all chunks are received — unit test
+- [x] `list_files()` returns all added files — unit test
+- [x] Database persists across `FileStore` instances (close and reopen) — unit test
+- [x] `cargo clippy -- -D warnings` passes
+- [x] `cargo fmt --check` passes

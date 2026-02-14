@@ -8,11 +8,14 @@ license.workspace = true
 anyhow.workspace = true
 bisc-protocol.workspace = true
 bytes.workspace = true
+data-encoding.workspace = true
+rusqlite.workspace = true
 serde.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+tempfile.workspace = true
 tracing-subscriber.workspace = true
 
 [lints.clippy]

@@ -73,12 +73,8 @@ impl FileStore {
             .context("failed to insert file")?;
 
         let file_dir = self.file_dir(&manifest.file_hash);
-        std::fs::create_dir_all(&file_dir).with_context(|| {
-            format!(
-                "failed to create file directory: {}",
-                file_dir.display()
-            )
-        })?;
+        std::fs::create_dir_all(&file_dir)
+            .with_context(|| format!("failed to create file directory: {}", file_dir.display()))?;
 
         tracing::info!(
             file_hash = data_encoding::HEXLOWER.encode(&manifest.file_hash),
@@ -95,9 +91,7 @@ impl FileStore {
     pub fn get_file(&self, file_hash: &[u8; 32]) -> Result<Option<FileManifest>> {
         let mut stmt = self
             .conn
-            .prepare(
-                "SELECT hash, name, size, chunk_size, chunk_count FROM files WHERE hash = ?1",
-            )
+            .prepare("SELECT hash, name, size, chunk_size, chunk_count FROM files WHERE hash = ?1")
             .context("failed to prepare query")?;
 
         let result = stmt.query_row(rusqlite::params![file_hash.as_slice()], |row| {
@@ -188,8 +182,7 @@ impl FileStore {
             )
             .context("failed to query chunk count")?;
 
-        let mut bitfield =
-            ChunkBitfield::new(*file_hash, EndpointId([0; 32]), chunk_count as u32);
+        let mut bitfield = ChunkBitfield::new(*file_hash, EndpointId([0; 32]), chunk_count as u32);
 
         let mut stmt = self
             .conn
@@ -330,15 +323,9 @@ mod tests {
         }
 
         // Receive some chunks
-        store
-            .set_chunk_received(&manifest.file_hash, 0)
-            .unwrap();
-        store
-            .set_chunk_received(&manifest.file_hash, 3)
-            .unwrap();
-        store
-            .set_chunk_received(&manifest.file_hash, 9)
-            .unwrap();
+        store.set_chunk_received(&manifest.file_hash, 0).unwrap();
+        store.set_chunk_received(&manifest.file_hash, 3).unwrap();
+        store.set_chunk_received(&manifest.file_hash, 9).unwrap();
 
         let bf = store.get_chunk_bitfield(&manifest.file_hash).unwrap();
         assert!(bf.has_chunk(0));
@@ -348,9 +335,7 @@ mod tests {
         assert!(bf.has_chunk(9));
 
         // Idempotent: setting same chunk again should not error
-        store
-            .set_chunk_received(&manifest.file_hash, 0)
-            .unwrap();
+        store.set_chunk_received(&manifest.file_hash, 0).unwrap();
     }
 
     #[test]
@@ -363,19 +348,13 @@ mod tests {
 
         assert!(!store.is_complete(&manifest.file_hash).unwrap());
 
-        store
-            .set_chunk_received(&manifest.file_hash, 0)
-            .unwrap();
+        store.set_chunk_received(&manifest.file_hash, 0).unwrap();
         assert!(!store.is_complete(&manifest.file_hash).unwrap());
 
-        store
-            .set_chunk_received(&manifest.file_hash, 1)
-            .unwrap();
+        store.set_chunk_received(&manifest.file_hash, 1).unwrap();
         assert!(!store.is_complete(&manifest.file_hash).unwrap());
 
-        store
-            .set_chunk_received(&manifest.file_hash, 2)
-            .unwrap();
+        store.set_chunk_received(&manifest.file_hash, 2).unwrap();
         assert!(store.is_complete(&manifest.file_hash).unwrap());
     }
 
@@ -409,12 +388,8 @@ mod tests {
         {
             let store = FileStore::new(store_dir.clone()).unwrap();
             store.add_file(&manifest).unwrap();
-            store
-                .set_chunk_received(&manifest.file_hash, 0)
-                .unwrap();
-            store
-                .set_chunk_received(&manifest.file_hash, 2)
-                .unwrap();
+            store.set_chunk_received(&manifest.file_hash, 0).unwrap();
+            store.set_chunk_received(&manifest.file_hash, 2).unwrap();
         }
 
         // Second instance: data should persist
