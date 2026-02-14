@@ -19,10 +19,10 @@ Split files into chunks, transfer over iroh reliable streams, and reassemble.
 
 ## Acceptance Criteria
 
-- [ ] A file can be sent and received between two peers — integration test (use a temp file)
-- [ ] Received file content matches the original (SHA-256 verified) — integration test
-- [ ] Large file (> 1MB, multiple chunks) transfers correctly — integration test
-- [ ] Small file (< 256KB, single chunk) transfers correctly — integration test
-- [ ] Transfer handles connection drop gracefully (returns error, doesn't panic) — integration test
-- [ ] `cargo clippy -- -D warnings` passes
-- [ ] `cargo fmt --check` passes
+- [x] A file can be sent and received between two peers — integration test (use a temp file)
+- [x] Received file content matches the original (SHA-256 verified) — integration test
+- [x] Large file (> 1MB, multiple chunks) transfers correctly — integration test
+- [x] Small file (< 256KB, single chunk) transfers correctly — integration test
+- [x] Transfer handles connection drop gracefully (returns error, doesn't panic) — integration test
+- [x] `cargo clippy -- -D warnings` passes
+- [x] `cargo fmt --check` passes

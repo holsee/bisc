@@ -4,6 +4,7 @@
 //! SQLite tracks file metadata (manifests) and chunk download progress.
 
 use std::path::PathBuf;
+use std::sync::Mutex;
 
 use anyhow::{Context, Result};
 use bisc_protocol::file::{ChunkBitfield, FileManifest};
@@ -11,9 +12,11 @@ use bisc_protocol::types::EndpointId;
 use rusqlite::Connection;
 
 /// Manages local file storage and SQLite metadata.
+///
+/// Thread-safe: the inner SQLite connection is protected by a `Mutex`.
 pub struct FileStore {
     storage_dir: PathBuf,
-    conn: Connection,
+    conn: Mutex<Connection>,
 }
 
 impl FileStore {
@@ -53,24 +56,27 @@ impl FileStore {
 
         tracing::info!(storage_dir = %storage_dir.display(), "file store opened");
 
-        Ok(Self { storage_dir, conn })
+        Ok(Self {
+            storage_dir,
+            conn: Mutex::new(conn),
+        })
     }
 
     /// Add a file manifest to the store. Returns the file hash.
     pub fn add_file(&self, manifest: &FileManifest) -> Result<[u8; 32]> {
-        self.conn
-            .execute(
-                "INSERT OR REPLACE INTO files (hash, name, size, chunk_size, chunk_count, complete)
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT OR REPLACE INTO files (hash, name, size, chunk_size, chunk_count, complete)
                  VALUES (?1, ?2, ?3, ?4, ?5, 0)",
-                rusqlite::params![
-                    manifest.file_hash.as_slice(),
-                    manifest.file_name,
-                    manifest.file_size as i64,
-                    manifest.chunk_size as i64,
-                    manifest.chunk_count as i64,
-                ],
-            )
-            .context("failed to insert file")?;
+            rusqlite::params![
+                manifest.file_hash.as_slice(),
+                manifest.file_name,
+                manifest.file_size as i64,
+                manifest.chunk_size as i64,
+                manifest.chunk_count as i64,
+            ],
+        )
+        .context("failed to insert file")?;
 
         let file_dir = self.file_dir(&manifest.file_hash);
         std::fs::create_dir_all(&file_dir)
@@ -89,8 +95,8 @@ impl FileStore {
 
     /// Get a file manifest by hash.
     pub fn get_file(&self, file_hash: &[u8; 32]) -> Result<Option<FileManifest>> {
-        let mut stmt = self
-            .conn
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
             .prepare("SELECT hash, name, size, chunk_size, chunk_count FROM files WHERE hash = ?1")
             .context("failed to prepare query")?;
 
@@ -116,17 +122,16 @@ impl FileStore {
 
     /// Mark a chunk as received.
     pub fn set_chunk_received(&self, file_hash: &[u8; 32], chunk_index: u32) -> Result<()> {
-        self.conn
-            .execute(
-                "INSERT OR IGNORE INTO chunks (file_hash, chunk_index, received)
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT OR IGNORE INTO chunks (file_hash, chunk_index, received)
                  VALUES (?1, ?2, 1)",
-                rusqlite::params![file_hash.as_slice(), chunk_index as i64],
-            )
-            .context("failed to mark chunk received")?;
+            rusqlite::params![file_hash.as_slice(), chunk_index as i64],
+        )
+        .context("failed to mark chunk received")?;
 
         // Check if file is now complete and update the flag.
-        let chunk_count: i64 = self
-            .conn
+        let chunk_count: i64 = conn
             .query_row(
                 "SELECT chunk_count FROM files WHERE hash = ?1",
                 rusqlite::params![file_hash.as_slice()],
@@ -134,8 +139,7 @@ impl FileStore {
             )
             .context("failed to query chunk count")?;
 
-        let received_count: i64 = self
-            .conn
+        let received_count: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM chunks WHERE file_hash = ?1 AND received = 1",
                 rusqlite::params![file_hash.as_slice()],
@@ -144,12 +148,11 @@ impl FileStore {
             .context("failed to count received chunks")?;
 
         if received_count >= chunk_count {
-            self.conn
-                .execute(
-                    "UPDATE files SET complete = 1 WHERE hash = ?1",
-                    rusqlite::params![file_hash.as_slice()],
-                )
-                .context("failed to update file completeness")?;
+            conn.execute(
+                "UPDATE files SET complete = 1 WHERE hash = ?1",
+                rusqlite::params![file_hash.as_slice()],
+            )
+            .context("failed to update file completeness")?;
 
             tracing::info!(
                 file_hash = data_encoding::HEXLOWER.encode(file_hash),
@@ -173,8 +176,8 @@ impl FileStore {
     /// The returned bitfield uses a zero `EndpointId`; callers should set the
     /// peer ID if needed for protocol exchange.
     pub fn get_chunk_bitfield(&self, file_hash: &[u8; 32]) -> Result<ChunkBitfield> {
-        let chunk_count: i64 = self
-            .conn
+        let conn = self.conn.lock().unwrap();
+        let chunk_count: i64 = conn
             .query_row(
                 "SELECT chunk_count FROM files WHERE hash = ?1",
                 rusqlite::params![file_hash.as_slice()],
@@ -184,8 +187,7 @@ impl FileStore {
 
         let mut bitfield = ChunkBitfield::new(*file_hash, EndpointId([0; 32]), chunk_count as u32);
 
-        let mut stmt = self
-            .conn
+        let mut stmt = conn
             .prepare("SELECT chunk_index FROM chunks WHERE file_hash = ?1 AND received = 1")
             .context("failed to prepare bitfield query")?;
 
@@ -205,8 +207,8 @@ impl FileStore {
 
     /// Check if all chunks for a file have been received.
     pub fn is_complete(&self, file_hash: &[u8; 32]) -> Result<bool> {
-        let complete: i64 = self
-            .conn
+        let conn = self.conn.lock().unwrap();
+        let complete: i64 = conn
             .query_row(
                 "SELECT complete FROM files WHERE hash = ?1",
                 rusqlite::params![file_hash.as_slice()],
@@ -219,8 +221,8 @@ impl FileStore {
 
     /// List all known files.
     pub fn list_files(&self) -> Result<Vec<FileManifest>> {
-        let mut stmt = self
-            .conn
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
             .prepare("SELECT hash, name, size, chunk_size, chunk_count FROM files")
             .context("failed to prepare list query")?;
 
