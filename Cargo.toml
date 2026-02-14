@@ -35,6 +35,8 @@ opus = "0.3"
 audiopus_sys = { version = "0.2", features = ["static"] }
 nokhwa = { version = "0.10", features = ["input-native"] }
 openh264 = "0.9"
+iced = { version = "0.14", features = ["wgpu"] }
+bytemuck = { version = "1", features = ["derive"] }
 
 # Internal crates
 bisc-protocol = { path = "bisc-protocol" }

@@ -20,10 +20,10 @@ Custom Iced `Shader` widget that renders a video frame as a GPU texture.
 
 ## Acceptance Criteria
 
-- [ ] Widget compiles and can be placed in an Iced layout — unit test / build test
-- [ ] Shader compiles (WGSL validation) — unit test
-- [ ] A synthetic test frame (solid color) can be uploaded and the widget renders without panic — integration test (headless if possible, or just verify no errors)
-- [ ] Texture is recreated when frame dimensions change — unit test on internal logic
-- [ ] Aspect ratio is maintained (not stretched) — unit test on viewport calculation
-- [ ] `cargo clippy -- -D warnings` passes
-- [ ] `cargo fmt --check` passes
+- [x] Widget compiles and can be placed in an Iced layout — unit test / build test
+- [x] Shader compiles (WGSL validation) — unit test
+- [x] A synthetic test frame (solid color) can be uploaded and the widget renders without panic — integration test (headless if possible, or just verify no errors)
+- [x] Texture is recreated when frame dimensions change — unit test on internal logic
+- [x] Aspect ratio is maintained (not stretched) — unit test on viewport calculation
+- [x] `cargo clippy -- -D warnings` passes
+- [x] `cargo fmt --check` passes

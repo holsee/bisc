@@ -6,7 +6,12 @@ license.workspace = true
 
 [dependencies]
 bisc-protocol.workspace = true
+iced.workspace = true
 tracing.workspace = true
+bytemuck.workspace = true
+
+[dev-dependencies]
+naga = { version = "27", features = ["wgsl-in"] }
 
 [lints.clippy]
 all = { level = "deny", priority = -1 }
