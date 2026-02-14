@@ -19,9 +19,9 @@ Send and receive `MediaPacket`s over QUIC datagrams, handling serialization and 
 
 ## Acceptance Criteria
 
-- [ ] `MediaPacket` can be serialized, sent as datagram, received, and deserialized — integration test with two connected peers
-- [ ] Audio-sized packets (~100-200 bytes) are sent and received correctly — integration test
-- [ ] Malformed datagrams are dropped without panic — unit test (feed garbage bytes to deserialize)
-- [ ] Sequence numbers increment correctly per stream_id — unit test
-- [ ] `cargo clippy -- -D warnings` passes
-- [ ] `cargo fmt --check` passes
+- [x] `MediaPacket` can be serialized, sent as datagram, received, and deserialized — integration test with two connected peers
+- [x] Audio-sized packets (~100-200 bytes) are sent and received correctly — integration test
+- [x] Malformed datagrams are dropped without panic — unit test (feed garbage bytes to deserialize)
+- [x] Sequence numbers increment correctly per stream_id — unit test
+- [x] `cargo clippy -- -D warnings` passes
+- [x] `cargo fmt --check` passes

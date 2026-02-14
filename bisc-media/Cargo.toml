@@ -12,12 +12,15 @@ anyhow.workspace = true
 bisc-protocol.workspace = true
 bytes.workspace = true
 cpal = { workspace = true, optional = true }
+iroh.workspace = true
 opus.workspace = true
+postcard.workspace = true
 serde.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+bisc-net.workspace = true
 tracing-subscriber.workspace = true
 
 [lints.clippy]

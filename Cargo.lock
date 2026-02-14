@@ -225,10 +225,13 @@ name = "bisc-media"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bisc-net",
  "bisc-protocol",
  "bytes",
  "cpal",
+ "iroh",
  "opus",
+ "postcard",
  "serde",
  "tokio",
  "tracing",
