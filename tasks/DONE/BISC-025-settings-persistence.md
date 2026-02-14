@@ -18,10 +18,10 @@ Load and save user settings (display name, storage directory, quality preference
 
 ## Acceptance Criteria
 
-- [ ] `Settings::default()` produces valid settings — unit test
-- [ ] `Settings::save()` + `Settings::load()` round-trip — unit test (in temp dir)
-- [ ] Missing config file returns defaults without error — unit test
-- [ ] Corrupted config file returns defaults without panic (log warning) — unit test
-- [ ] All fields serialize/deserialize correctly — unit test
-- [ ] `cargo clippy -- -D warnings` passes
-- [ ] `cargo fmt --check` passes
+- [x] `Settings::default()` produces valid settings — unit test
+- [x] `Settings::save()` + `Settings::load()` round-trip — unit test (in temp dir)
+- [x] Missing config file returns defaults without error — unit test
+- [x] Corrupted config file returns defaults without panic (log warning) — unit test
+- [x] All fields serialize/deserialize correctly — unit test
+- [x] `cargo clippy -- -D warnings` passes
+- [x] `cargo fmt --check` passes

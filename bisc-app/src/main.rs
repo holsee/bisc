@@ -1,3 +1,5 @@
+pub mod settings;
+
 use tracing_subscriber::EnvFilter;
 
 fn main() -> anyhow::Result<()> {
