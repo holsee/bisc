@@ -1,5 +1,6 @@
 //! Audio/video capture, codecs, pipelines, and jitter buffer.
 
+pub mod app_audio;
 #[cfg(feature = "audio")]
 pub mod audio_io;
 #[cfg(feature = "video")]

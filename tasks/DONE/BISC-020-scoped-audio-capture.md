@@ -19,9 +19,9 @@ Capture audio from a specific application. Platform-specific implementations beh
 
 ## Acceptance Criteria
 
-- [ ] `AppAudioCapture` trait compiles on all platforms — build test
-- [ ] On Linux with PipeWire: `list_capturable_apps()` returns a list (may be empty if no apps playing audio) — integration test
-- [ ] On platforms without implementation: stub returns empty list and `start_capture()` returns an error — unit test
-- [ ] If PipeWire is not available on Linux, fallback gracefully (no panic, return error) — unit test
-- [ ] `cargo clippy -- -D warnings` passes
-- [ ] `cargo fmt --check` passes
+- [x] `AppAudioCapture` trait compiles on all platforms — build test
+- [x] On Linux with PipeWire: `list_capturable_apps()` returns a list (may be empty if no apps playing audio) — integration test
+- [x] On platforms without implementation: stub returns empty list and `start_capture()` returns an error — unit test
+- [x] If PipeWire is not available on Linux, fallback gracefully (no panic, return error) — unit test
+- [x] `cargo clippy -- -D warnings` passes
+- [x] `cargo fmt --check` passes
