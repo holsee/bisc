@@ -8,14 +8,7 @@ use nokhwa::utils::{
     ApiBackend, CameraFormat, CameraIndex, RequestedFormat, RequestedFormatType, Resolution,
 };
 
-/// Pixel format of a raw frame.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PixelFormat {
-    /// RGBA 8-bit per channel (4 bytes per pixel).
-    Rgba,
-    /// NV12 (YUV 4:2:0 semi-planar, raw from camera).
-    Nv12,
-}
+pub use crate::video_types::{PixelFormat, RawFrame};
 
 /// Camera configuration.
 #[derive(Debug, Clone)]
@@ -50,19 +43,6 @@ pub struct CameraInfo {
     pub index: u32,
     /// Additional description (backend-specific).
     pub description: String,
-}
-
-/// A raw video frame.
-#[derive(Debug, Clone)]
-pub struct RawFrame {
-    /// Pixel data.
-    pub data: Vec<u8>,
-    /// Frame width in pixels.
-    pub width: u32,
-    /// Frame height in pixels.
-    pub height: u32,
-    /// Pixel format.
-    pub format: PixelFormat,
 }
 
 /// List available cameras.

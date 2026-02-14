@@ -21,10 +21,10 @@ Encode raw video frames to H.264 and decode back.
 
 ## Acceptance Criteria
 
-- [ ] Encode a synthetic frame (solid color, known dimensions) and get valid H.264 NAL units — unit test
-- [ ] Decode the encoded NAL units back to a frame with correct dimensions — unit test
-- [ ] First frame is a keyframe (IDR) — unit test
-- [ ] `force_keyframe()` produces an IDR at the next encode call — unit test
-- [ ] Bitrate change affects encoded size (lower bitrate = smaller output over several frames) — unit test
-- [ ] `cargo clippy -- -D warnings` passes
-- [ ] `cargo fmt --check` passes
+- [x] Encode a synthetic frame (solid color, known dimensions) and get valid H.264 NAL units — unit test
+- [x] Decode the encoded NAL units back to a frame with correct dimensions — unit test
+- [x] First frame is a keyframe (IDR) — unit test
+- [x] `force_keyframe()` produces an IDR at the next encode call — unit test
+- [x] Bitrate change affects encoded size (lower bitrate = smaller output over several frames) — unit test
+- [x] `cargo clippy -- -D warnings` passes
+- [x] `cargo fmt --check` passes

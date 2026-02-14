@@ -7,6 +7,7 @@ license.workspace = true
 [features]
 audio = ["dep:cpal"]
 video = ["dep:nokhwa"]
+video-codec = ["dep:openh264"]
 
 [dependencies]
 anyhow.workspace = true
@@ -14,6 +15,7 @@ bisc-protocol.workspace = true
 bytes.workspace = true
 cpal = { workspace = true, optional = true }
 nokhwa = { workspace = true, optional = true }
+openh264 = { workspace = true, optional = true }
 iroh.workspace = true
 opus.workspace = true
 postcard.workspace = true

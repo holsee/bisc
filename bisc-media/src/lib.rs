@@ -9,4 +9,7 @@ pub mod jitter_buffer;
 pub mod negotiation;
 pub mod opus_codec;
 pub mod transport;
+#[cfg(feature = "video-codec")]
+pub mod video_codec;
+pub mod video_types;
 pub mod voice_pipeline;
