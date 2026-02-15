@@ -1,10 +1,10 @@
 //! Video call integration: manages camera, video pipelines, and frame delivery.
 //!
 //! When a user enables their camera, frames flow from the camera through the
-//! `VideoPipeline` send loop (H.264 encode → fragment → QUIC datagrams).
-//! Incoming video from remote peers flows through the recv loop (reassemble →
-//! decode → frame buffer). Decoded frames are stored in shared state so the
-//! Iced view can render them via `VideoSurface` widgets.
+//! fan-out mechanism to all active `VideoPipeline` send loops (H.264 encode →
+//! fragment → QUIC datagrams). Incoming video from remote peers flows through
+//! the recv loop (reassemble → decode → frame buffer). Decoded frames are stored
+//! in shared state so the Iced view can render them via `VideoSurface` widgets.
 //!
 //! Requires the `video-codec` feature for H.264 codec support.
 //! Camera capture additionally requires the `video` feature.
@@ -52,6 +52,10 @@ pub fn video_config_for_quality(quality: Quality) -> VideoConfig {
     }
 }
 
+/// Shared fan-out registry: maps peer IDs to their pipeline frame input senders.
+/// The camera capture thread writes frames here, and pipelines receive them.
+type FrameFanout = Arc<Mutex<HashMap<String, mpsc::UnboundedSender<RawFrame>>>>;
+
 /// Manages video state: camera, pipelines, and frame delivery.
 pub struct VideoState {
     /// Whether camera capture is active.
@@ -66,10 +70,10 @@ pub struct VideoState {
     peer_frames: Arc<Mutex<HashMap<String, RawFrame>>>,
     /// Local camera preview frame (written by camera task, read by UI).
     local_frame: Arc<Mutex<Option<RawFrame>>>,
-    /// Camera frame sender (camera task writes here, pipeline reads).
-    camera_tx: Option<mpsc::UnboundedSender<RawFrame>>,
-    /// Camera task handle.
-    camera_handle: Option<JoinHandle<()>>,
+    /// Fan-out registry: camera thread sends frames to all registered pipeline inputs.
+    frame_fanout: FrameFanout,
+    /// Camera task handle (std::thread, not tokio).
+    camera_stop: Option<Arc<std::sync::atomic::AtomicBool>>,
     /// Frame relay task handles (per-peer: pipeline output → shared state).
     relay_handles: HashMap<String, JoinHandle<()>>,
     /// Current video quality preset (used when creating new pipelines).
@@ -86,8 +90,8 @@ impl VideoState {
             pipelines: HashMap::new(),
             peer_frames: Arc::new(Mutex::new(HashMap::new())),
             local_frame: Arc::new(Mutex::new(None)),
-            camera_tx: None,
-            camera_handle: None,
+            frame_fanout: Arc::new(Mutex::new(HashMap::new())),
+            camera_stop: None,
             relay_handles: HashMap::new(),
             quality: Quality::Medium,
         }
@@ -118,11 +122,11 @@ impl VideoState {
             return true;
         }
 
-        let (tx, _rx) = mpsc::unbounded_channel();
-        let started = start_camera_capture(&tx, &self.local_frame);
+        let stop_flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let started = start_camera_capture(&self.local_frame, &self.frame_fanout, &stop_flag);
 
         if started {
-            self.camera_tx = Some(tx);
+            self.camera_stop = Some(stop_flag);
             self.camera_on = true;
             tracing::info!("camera started");
 
@@ -144,10 +148,9 @@ impl VideoState {
             return;
         }
 
-        // Drop the camera sender to stop the capture
-        self.camera_tx = None;
-        if let Some(handle) = self.camera_handle.take() {
-            handle.abort();
+        // Signal the camera thread to stop
+        if let Some(stop) = self.camera_stop.take() {
+            stop.store(true, std::sync::atomic::Ordering::Relaxed);
         }
         *self.local_frame.lock().unwrap() = None;
         self.camera_on = false;
@@ -200,12 +203,12 @@ impl VideoState {
 
         tracing::info!(peer_id = %peer_id, "video pipeline started for peer");
 
-        // If we have a camera, fan-out frames to this pipeline too
-        // (The camera_tx is the sender; we need a copy of it for each pipeline's input)
-        // For now, we won't fan-out camera frames to video pipelines from here
-        // because the camera_tx/rx mechanism needs restructuring for multi-peer.
-        // Instead, each pipeline gets its own frame_in_tx that the camera task writes to.
-        drop(frame_in_tx); // TODO: wire camera fan-out in future
+        // Register this pipeline's frame input with the fan-out so camera frames are delivered
+        self.frame_fanout
+            .lock()
+            .unwrap()
+            .insert(peer_id.clone(), frame_in_tx);
+        tracing::debug!(peer_id = %peer_id, "registered pipeline with camera fan-out");
 
         // Spawn relay task: pipeline output → shared frame buffer
         let peer_frames = Arc::clone(&self.peer_frames);
@@ -233,6 +236,9 @@ impl VideoState {
 
     /// Remove and stop the video pipeline for a peer.
     pub async fn remove_peer(&mut self, peer_id: &str) {
+        // Remove from fan-out first so no more frames are sent
+        self.frame_fanout.lock().unwrap().remove(peer_id);
+
         #[cfg(feature = "video-codec")]
         if let Some(mut pipeline) = self.pipelines.remove(peer_id) {
             pipeline.stop().await;
@@ -251,6 +257,9 @@ impl VideoState {
     /// Shut down all video pipelines and camera.
     pub async fn shutdown(&mut self) {
         self.stop_camera();
+
+        // Clear the fan-out
+        self.frame_fanout.lock().unwrap().clear();
 
         #[cfg(feature = "video-codec")]
         for (peer_id, mut pipeline) in self.pipelines.drain() {
@@ -285,15 +294,22 @@ async fn frame_relay_task(
 
 /// Start camera capture if the `video` feature is enabled.
 ///
+/// The camera thread captures frames and:
+/// 1. Stores the latest frame in `local_frame` for local preview
+/// 2. Fans out each frame to all registered pipeline inputs via `frame_fanout`
+///
 /// Returns true if the camera was successfully started.
 #[cfg(feature = "video")]
 fn start_camera_capture(
-    _camera_tx: &mpsc::UnboundedSender<RawFrame>,
     local_frame: &Arc<Mutex<Option<RawFrame>>>,
+    frame_fanout: &FrameFanout,
+    stop_flag: &Arc<std::sync::atomic::AtomicBool>,
 ) -> bool {
     use bisc_media::camera::{Camera, CameraConfig};
 
     let local_frame = Arc::clone(local_frame);
+    let fanout = Arc::clone(frame_fanout);
+    let stop = Arc::clone(stop_flag);
 
     // Camera types (nokhwa) are not Send, so open and use on a dedicated thread
     let (ready_tx, ready_rx) = std::sync::mpsc::channel();
@@ -303,9 +319,25 @@ fn start_camera_capture(
             Ok(mut camera) => {
                 tracing::info!("camera opened successfully");
                 let _ = ready_tx.send(true);
-                loop {
+                while !stop.load(std::sync::atomic::Ordering::Relaxed) {
                     match camera.capture_frame() {
                         Ok(frame) => {
+                            // Fan out to all registered pipeline inputs
+                            {
+                                let mut senders = fanout.lock().unwrap();
+                                senders.retain(|peer_id, tx| {
+                                    if tx.send(frame.clone()).is_err() {
+                                        tracing::debug!(
+                                            peer_id = %peer_id,
+                                            "pipeline frame channel closed, removing"
+                                        );
+                                        false
+                                    } else {
+                                        true
+                                    }
+                                });
+                            }
+                            // Store for local preview
                             *local_frame.lock().unwrap() = Some(frame);
                         }
                         Err(e) => {
@@ -314,6 +346,7 @@ fn start_camera_capture(
                     }
                     std::thread::sleep(std::time::Duration::from_millis(33)); // ~30fps
                 }
+                tracing::info!("camera capture thread stopped");
             }
             Err(e) => {
                 tracing::warn!(error = %e, "failed to open camera");
@@ -329,8 +362,9 @@ fn start_camera_capture(
 /// Stub when the `video` feature is not enabled.
 #[cfg(not(feature = "video"))]
 fn start_camera_capture(
-    _camera_tx: &mpsc::UnboundedSender<RawFrame>,
     _local_frame: &Arc<Mutex<Option<RawFrame>>>,
+    _frame_fanout: &FrameFanout,
+    _stop_flag: &Arc<std::sync::atomic::AtomicBool>,
 ) -> bool {
     tracing::info!("video feature not enabled, camera disabled");
     false
@@ -417,5 +451,141 @@ mod tests {
             .await
             .expect("relay should end")
             .expect("relay should not panic");
+    }
+
+    #[test]
+    fn fanout_delivers_frames_to_multiple_pipelines() {
+        let fanout: FrameFanout = Arc::new(Mutex::new(HashMap::new()));
+
+        // Register two pipeline inputs
+        let (tx_a, mut rx_a) = mpsc::unbounded_channel();
+        let (tx_b, mut rx_b) = mpsc::unbounded_channel();
+        {
+            let mut senders = fanout.lock().unwrap();
+            senders.insert("peer-a".to_string(), tx_a);
+            senders.insert("peer-b".to_string(), tx_b);
+        }
+
+        // Simulate camera sending a frame
+        let frame = RawFrame {
+            data: vec![42; 64 * 64 * 4],
+            width: 64,
+            height: 64,
+            format: bisc_media::video_types::PixelFormat::Rgba,
+        };
+        {
+            let senders = fanout.lock().unwrap();
+            for (_, tx) in senders.iter() {
+                let _ = tx.send(frame.clone());
+            }
+        }
+
+        // Both pipelines should receive the frame
+        let frame_a = rx_a.try_recv().expect("peer-a should receive frame");
+        let frame_b = rx_b.try_recv().expect("peer-b should receive frame");
+        assert_eq!(frame_a.width, 64);
+        assert_eq!(frame_b.width, 64);
+        assert_eq!(frame_a.data[0], 42);
+        assert_eq!(frame_b.data[0], 42);
+    }
+
+    #[test]
+    fn fanout_handles_dynamic_add_remove() {
+        let fanout: FrameFanout = Arc::new(Mutex::new(HashMap::new()));
+
+        // Start with one pipeline
+        let (tx_a, mut rx_a) = mpsc::unbounded_channel();
+        fanout.lock().unwrap().insert("peer-a".to_string(), tx_a);
+
+        // Send frame 1 — only peer-a gets it
+        let frame1 = RawFrame {
+            data: vec![1; 4],
+            width: 1,
+            height: 1,
+            format: bisc_media::video_types::PixelFormat::Rgba,
+        };
+        {
+            let senders = fanout.lock().unwrap();
+            for (_, tx) in senders.iter() {
+                let _ = tx.send(frame1.clone());
+            }
+        }
+        assert!(rx_a.try_recv().is_ok());
+
+        // Add peer-b
+        let (tx_b, mut rx_b) = mpsc::unbounded_channel();
+        fanout.lock().unwrap().insert("peer-b".to_string(), tx_b);
+
+        // Send frame 2 — both get it
+        let frame2 = RawFrame {
+            data: vec![2; 4],
+            width: 1,
+            height: 1,
+            format: bisc_media::video_types::PixelFormat::Rgba,
+        };
+        {
+            let senders = fanout.lock().unwrap();
+            for (_, tx) in senders.iter() {
+                let _ = tx.send(frame2.clone());
+            }
+        }
+        assert!(rx_a.try_recv().is_ok());
+        assert!(rx_b.try_recv().is_ok());
+
+        // Remove peer-a
+        fanout.lock().unwrap().remove("peer-a");
+
+        // Send frame 3 — only peer-b gets it
+        let frame3 = RawFrame {
+            data: vec![3; 4],
+            width: 1,
+            height: 1,
+            format: bisc_media::video_types::PixelFormat::Rgba,
+        };
+        {
+            let senders = fanout.lock().unwrap();
+            for (_, tx) in senders.iter() {
+                let _ = tx.send(frame3.clone());
+            }
+        }
+        assert!(rx_a.try_recv().is_err()); // peer-a removed
+        assert!(rx_b.try_recv().is_ok());
+    }
+
+    #[test]
+    fn fanout_cleans_up_closed_channels() {
+        let fanout: FrameFanout = Arc::new(Mutex::new(HashMap::new()));
+
+        let (tx_a, rx_a) = mpsc::unbounded_channel();
+        let (tx_b, mut rx_b) = mpsc::unbounded_channel();
+        {
+            let mut senders = fanout.lock().unwrap();
+            senders.insert("peer-a".to_string(), tx_a);
+            senders.insert("peer-b".to_string(), tx_b);
+        }
+
+        // Drop peer-a's receiver (simulating pipeline shutdown)
+        drop(rx_a);
+
+        // Send a frame — should clean up peer-a's sender
+        let frame = RawFrame {
+            data: vec![0; 4],
+            width: 1,
+            height: 1,
+            format: bisc_media::video_types::PixelFormat::Rgba,
+        };
+        {
+            let mut senders = fanout.lock().unwrap();
+            senders.retain(|_, tx| tx.send(frame.clone()).is_ok());
+        }
+
+        // peer-a should be removed, peer-b should still be there
+        let senders = fanout.lock().unwrap();
+        assert!(!senders.contains_key("peer-a"));
+        assert!(senders.contains_key("peer-b"));
+        drop(senders);
+
+        // peer-b should have received the frame
+        assert!(rx_b.try_recv().is_ok());
     }
 }
