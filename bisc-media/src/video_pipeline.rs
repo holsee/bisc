@@ -6,11 +6,14 @@
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::Instant;
 
 use anyhow::{Context, Result};
+use bisc_protocol::media::{decode_media_control, encode_media_control, MediaControl, MediaPacket};
 use tokio::sync::{mpsc, watch};
 use tokio::task::JoinHandle;
 
+use crate::congestion::{CongestionConfig, CongestionEstimator};
 use crate::fragmentation::{Fragmenter, Reassembler};
 use crate::transport::MediaTransport;
 use crate::video_codec::{VideoDecoder, VideoEncoder};
@@ -43,6 +46,9 @@ fn contains_idr_nal(data: &[u8]) -> bool {
 
 /// Stream ID used for video (audio uses stream 0).
 const VIDEO_STREAM_ID: u8 = 1;
+
+/// Stream ID used for control messages.
+const CONTROL_STREAM_ID: u8 = 255;
 
 /// Default max payload size for fragments (fits comfortably in a QUIC datagram).
 const MAX_FRAGMENT_PAYLOAD: usize = 1200;
@@ -88,6 +94,10 @@ pub struct VideoConfig {
     pub height: u32,
     pub framerate: u32,
     pub bitrate_bps: u32,
+    /// Maximum bitrate for congestion control.
+    pub max_bitrate_bps: u32,
+    /// Minimum bitrate for congestion control.
+    pub min_bitrate_bps: u32,
 }
 
 impl Default for VideoConfig {
@@ -97,6 +107,8 @@ impl Default for VideoConfig {
             height: 480,
             framerate: 30,
             bitrate_bps: 500_000,
+            max_bitrate_bps: 2_000_000,
+            min_bitrate_bps: 100_000,
         }
     }
 }
@@ -166,11 +178,15 @@ impl VideoPipeline {
         let (command_tx, command_rx) = mpsc::unbounded_channel();
         self.command_tx = command_tx;
 
+        // In-process channel for forwarding control packets from recv_loop to send_loop
+        let (control_fwd_tx, control_fwd_rx) = mpsc::unbounded_channel();
+
         let send_handle = tokio::spawn(send_loop(
             self.connection.clone(),
             self.config.clone(),
             frame_in_rx,
             command_rx,
+            control_fwd_rx,
             Arc::clone(&self.camera_on),
             Arc::clone(&self.metrics),
             self.shutdown_rx.clone(),
@@ -179,6 +195,7 @@ impl VideoPipeline {
         let recv_handle = tokio::spawn(recv_loop(
             self.connection.clone(),
             frame_out_tx,
+            control_fwd_tx,
             Arc::clone(&self.metrics),
             self.shutdown_rx.clone(),
         ));
@@ -232,11 +249,16 @@ impl VideoPipeline {
 }
 
 /// Send loop: read frames → encode → fragment → send.
+///
+/// Also receives control messages (ReceiverReports, RequestKeyframe) forwarded
+/// from the recv_loop and feeds reports into a `CongestionEstimator`.
+#[allow(clippy::too_many_arguments)]
 async fn send_loop(
     connection: iroh::endpoint::Connection,
     config: VideoConfig,
     mut frame_in_rx: mpsc::UnboundedReceiver<RawFrame>,
     mut command_rx: mpsc::UnboundedReceiver<VideoCommand>,
+    mut control_rx: mpsc::UnboundedReceiver<MediaControl>,
     camera_on: Arc<AtomicBool>,
     metrics: Arc<VideoPipelineMetrics>,
     mut shutdown: watch::Receiver<bool>,
@@ -257,6 +279,14 @@ async fn send_loop(
     let mut transport = MediaTransport::new(connection);
     let mut timestamp: u32 = 0;
     let ts_increment = 90_000 / config.framerate;
+
+    // Congestion estimator for adaptive bitrate
+    let mut estimator = CongestionEstimator::new(CongestionConfig {
+        min_bitrate_bps: config.min_bitrate_bps,
+        max_bitrate_bps: config.max_bitrate_bps,
+        initial_bitrate_bps: config.bitrate_bps,
+        ..CongestionConfig::default()
+    });
 
     tracing::debug!("video send loop started");
 
@@ -283,6 +313,47 @@ async fn send_loop(
                     None => {
                         tracing::debug!("command channel closed");
                         return;
+                    }
+                }
+            }
+            ctrl = control_rx.recv() => {
+                match ctrl {
+                    Some(MediaControl::ReceiverReport {
+                        packets_received,
+                        packets_lost,
+                        jitter,
+                        rtt_estimate_ms,
+                        ..
+                    }) => {
+                        if let Some(rec) = estimator.on_report(
+                            packets_received,
+                            packets_lost,
+                            jitter,
+                            rtt_estimate_ms,
+                            Instant::now(),
+                        ) {
+                            let old = estimator.current_bitrate_bps();
+                            tracing::info!(
+                                old_bitrate = old,
+                                new_bitrate = rec.target_bitrate_bps,
+                                loss_rate = %estimator.loss_rate(),
+                                "video bitrate adapted"
+                            );
+                            encoder.set_bitrate(rec.target_bitrate_bps);
+                        }
+                    }
+                    Some(MediaControl::RequestKeyframe { stream_id }) => {
+                        if stream_id == VIDEO_STREAM_ID {
+                            encoder.force_keyframe();
+                            metrics.keyframes_forced.fetch_add(1, Ordering::Relaxed);
+                            tracing::info!("keyframe forced by remote request");
+                        }
+                    }
+                    Some(_) => {
+                        // Ignore other control messages
+                    }
+                    None => {
+                        tracing::debug!("control channel closed");
                     }
                 }
             }
@@ -334,9 +405,13 @@ async fn send_loop(
 }
 
 /// Receive loop: recv fragments → reassemble → decode → deliver.
+///
+/// Forwards control packets to the send loop and sends periodic receiver reports.
+/// Also sends keyframe requests when the decoder fails.
 async fn recv_loop(
     connection: iroh::endpoint::Connection,
     frame_out_tx: mpsc::UnboundedSender<RawFrame>,
+    control_fwd_tx: mpsc::UnboundedSender<MediaControl>,
     metrics: Arc<VideoPipelineMetrics>,
     mut shutdown: watch::Receiver<bool>,
 ) {
@@ -349,6 +424,15 @@ async fn recv_loop(
     };
     let mut transport = MediaTransport::new(connection);
     let mut reassembler = Reassembler::new();
+
+    // Receiver report generator for video stream
+    let mut report_gen = crate::control::ReceiverReportGenerator::new(VIDEO_STREAM_ID);
+    let mut report_interval = tokio::time::interval(std::time::Duration::from_secs(1));
+    report_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    report_interval.tick().await;
+
+    // Track decode failures for keyframe requests
+    let mut consecutive_decode_failures: u32 = 0;
 
     tracing::debug!("video receive loop started");
 
@@ -364,6 +448,14 @@ async fn recv_loop(
             result = transport.recv_media_packet() => {
                 match result {
                     Ok(packet) => {
+                        if packet.stream_id == CONTROL_STREAM_ID {
+                            // Decode control message and forward to send loop
+                            if let Ok(ctrl) = decode_media_control(&packet.payload) {
+                                let _ = control_fwd_tx.send(ctrl);
+                            }
+                            continue;
+                        }
+
                         if packet.stream_id != VIDEO_STREAM_ID {
                             continue;
                         }
@@ -376,6 +468,7 @@ async fn recv_loop(
                             match decoder.decode(&reassembled.data) {
                                 Ok(Some(frame)) => {
                                     metrics.frames_decoded.fetch_add(1, Ordering::Relaxed);
+                                    consecutive_decode_failures = 0;
                                     if frame_out_tx.send(frame).is_err() {
                                         tracing::debug!("frame output channel closed");
                                         return;
@@ -389,6 +482,16 @@ async fn recv_loop(
                                 }
                                 Err(e) => {
                                     tracing::warn!(error = %e, "video decode failed");
+                                    consecutive_decode_failures += 1;
+                                    // Request keyframe after persistent decode failures
+                                    if consecutive_decode_failures >= 3 {
+                                        tracing::info!(
+                                            failures = consecutive_decode_failures,
+                                            "requesting keyframe after decode failures"
+                                        );
+                                        send_keyframe_request(&mut transport);
+                                        consecutive_decode_failures = 0;
+                                    }
                                 }
                             }
                         }
@@ -399,6 +502,51 @@ async fn recv_loop(
                     }
                 }
             }
+            _ = report_interval.tick() => {
+                // Generate and send a receiver report to the remote peer
+                let report = report_gen.generate_report(
+                    &transport.metrics,
+                    // Video doesn't use a jitter buffer, so use transport metrics
+                    // for packet loss via a zero-loss jitter stats stand-in.
+                    &crate::jitter_buffer::JitterStats::default(),
+                    0.0,
+                );
+                if let Ok(payload) = encode_media_control(&report) {
+                    let mut pkt = MediaPacket {
+                        stream_id: CONTROL_STREAM_ID,
+                        sequence: 0,
+                        timestamp: 0,
+                        fragment_index: 0,
+                        fragment_count: 1,
+                        is_keyframe: false,
+                        payload,
+                    };
+                    if let Err(e) = transport.send_media_packet(&mut pkt) {
+                        tracing::debug!(error = %e, "failed to send video receiver report");
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Send a keyframe request control message via datagram.
+fn send_keyframe_request(transport: &mut MediaTransport) {
+    let ctrl = MediaControl::RequestKeyframe {
+        stream_id: VIDEO_STREAM_ID,
+    };
+    if let Ok(payload) = encode_media_control(&ctrl) {
+        let mut pkt = MediaPacket {
+            stream_id: CONTROL_STREAM_ID,
+            sequence: 0,
+            timestamp: 0,
+            fragment_index: 0,
+            fragment_count: 1,
+            is_keyframe: false,
+            payload,
+        };
+        if let Err(e) = transport.send_media_packet(&mut pkt) {
+            tracing::debug!(error = %e, "failed to send keyframe request");
         }
     }
 }
@@ -414,6 +562,8 @@ mod tests {
         assert_eq!(config.height, 480);
         assert_eq!(config.framerate, 30);
         assert_eq!(config.bitrate_bps, 500_000);
+        assert_eq!(config.max_bitrate_bps, 2_000_000);
+        assert_eq!(config.min_bitrate_bps, 100_000);
     }
 
     #[test]
@@ -475,5 +625,24 @@ mod tests {
 
         // Empty
         assert!(!contains_idr_nal(&[]));
+    }
+
+    #[test]
+    fn congestion_config_from_video_config() {
+        let vc = VideoConfig {
+            bitrate_bps: 500_000,
+            max_bitrate_bps: 1_000_000,
+            min_bitrate_bps: 100_000,
+            ..VideoConfig::default()
+        };
+        let cc = CongestionConfig {
+            min_bitrate_bps: vc.min_bitrate_bps,
+            max_bitrate_bps: vc.max_bitrate_bps,
+            initial_bitrate_bps: vc.bitrate_bps,
+            ..CongestionConfig::default()
+        };
+        assert_eq!(cc.initial_bitrate_bps, 500_000);
+        assert_eq!(cc.max_bitrate_bps, 1_000_000);
+        assert_eq!(cc.min_bitrate_bps, 100_000);
     }
 }

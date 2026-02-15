@@ -38,11 +38,11 @@
 
 ## Acceptance Criteria
 
-- [ ] Receiver reports are sent periodically during active voice/video calls
-- [ ] Sender adjusts Opus bitrate based on receiver reports
-- [ ] Sender adjusts video quality based on receiver reports
-- [ ] Keyframe requests trigger IDR frames from the sender
-- [ ] Quality presets from settings are respected as upper bounds
-- [ ] Bitrate changes are logged with before/after values
-- [ ] `cargo clippy --workspace -- -D warnings` passes
-- [ ] `cargo fmt --all --check` passes
+- [x] Receiver reports are sent periodically during active voice/video calls
+- [x] Sender adjusts Opus bitrate based on receiver reports
+- [x] Sender adjusts video quality based on receiver reports
+- [x] Keyframe requests trigger IDR frames from the sender
+- [x] Quality presets from settings are respected as upper bounds
+- [x] Bitrate changes are logged with before/after values
+- [x] `cargo clippy --workspace -- -D warnings` passes
+- [x] `cargo fmt --all --check` passes

@@ -120,14 +120,17 @@ async fn two_peer_voice_call_with_mute() {
     let (audio_in_b_tx, audio_in_b_rx) = mpsc::unbounded_channel::<Vec<f32>>();
     let (audio_out_b_tx, mut audio_out_b_rx) = mpsc::unbounded_channel::<Vec<f32>>();
 
+    let config = bisc_media::voice_pipeline::VoiceConfig::default();
     let mut pipeline_a = VoicePipeline::new(
         peer_conn_a.connection().clone(),
+        config.clone(),
         audio_in_a_rx,
         audio_out_a_tx,
     )
     .unwrap();
     let mut pipeline_b = VoicePipeline::new(
         peer_conn_b.connection().clone(),
+        config,
         audio_in_b_rx,
         audio_out_b_tx,
     )

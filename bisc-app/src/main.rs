@@ -26,6 +26,15 @@ use voice::VoiceState;
 use iced::{Element, Subscription};
 use tracing_subscriber::EnvFilter;
 
+/// Convert from UI quality enum to settings quality enum.
+fn ui_quality_to_settings(q: bisc_ui::screens::settings::Quality) -> settings::Quality {
+    match q {
+        bisc_ui::screens::settings::Quality::Low => settings::Quality::Low,
+        bisc_ui::screens::settings::Quality::Medium => settings::Quality::Medium,
+        bisc_ui::screens::settings::Quality::High => settings::Quality::High,
+    }
+}
+
 /// Networking state shared between the app and async tasks.
 struct Net {
     endpoint: BiscEndpoint,
@@ -491,9 +500,23 @@ impl BiscApp {
             AppAction::CopyToClipboard(text) => iced::clipboard::write(text),
             AppAction::SaveSettings => {
                 self.settings.display_name = self.app.settings_screen.display_name.clone();
+                // Convert UI quality enums to settings quality enums
+                self.settings.video_quality =
+                    ui_quality_to_settings(self.app.settings_screen.video_quality);
+                self.settings.audio_quality =
+                    ui_quality_to_settings(self.app.settings_screen.audio_quality);
                 if let Err(e) = self.settings.save() {
                     tracing::error!(error = %e, "failed to save settings");
                 }
+                // Propagate quality changes to voice/video state
+                let voice = Arc::clone(&self.voice);
+                let video = Arc::clone(&self.video);
+                let vq = self.settings.video_quality;
+                let aq = self.settings.audio_quality;
+                tokio::spawn(async move {
+                    voice.lock().await.set_quality(aq);
+                    video.lock().await.set_quality(vq);
+                });
                 iced::Task::none()
             }
             AppAction::CreateChannel(display_name) => {

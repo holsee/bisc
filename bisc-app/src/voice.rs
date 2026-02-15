@@ -13,9 +13,11 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use bisc_media::voice_pipeline::VoicePipeline;
+use bisc_media::voice_pipeline::{VoiceConfig, VoicePipeline};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
+
+use crate::settings::Quality;
 
 /// Commands for the audio hub task.
 enum HubCommand {
@@ -31,6 +33,27 @@ enum HubCommand {
     Shutdown,
 }
 
+/// Map a `Quality` preset to a `VoiceConfig` with appropriate bitrate bounds.
+pub fn voice_config_for_quality(quality: Quality) -> VoiceConfig {
+    match quality {
+        Quality::Low => VoiceConfig {
+            initial_bitrate_bps: 24_000,
+            max_bitrate_bps: 32_000,
+            min_bitrate_bps: 12_000,
+        },
+        Quality::Medium => VoiceConfig {
+            initial_bitrate_bps: 64_000,
+            max_bitrate_bps: 96_000,
+            min_bitrate_bps: 24_000,
+        },
+        Quality::High => VoiceConfig {
+            initial_bitrate_bps: 128_000,
+            max_bitrate_bps: 128_000,
+            min_bitrate_bps: 48_000,
+        },
+    }
+}
+
 /// Manages voice state: audio devices, pipelines, fan-out, and mixing.
 pub struct VoiceState {
     /// Active voice pipelines keyed by peer hex ID.
@@ -43,6 +66,8 @@ pub struct VoiceState {
     audio_available: bool,
     /// Global mute state.
     muted: bool,
+    /// Current audio quality preset (used when creating new pipelines).
+    quality: Quality,
 }
 
 impl VoiceState {
@@ -54,7 +79,14 @@ impl VoiceState {
             hub_handle: None,
             audio_available: false,
             muted: false,
+            quality: Quality::Medium,
         }
+    }
+
+    /// Set the audio quality preset. Affects newly created pipelines.
+    pub fn set_quality(&mut self, quality: Quality) {
+        tracing::info!(?quality, "voice quality preset changed");
+        self.quality = quality;
     }
 
     /// Initialize audio devices and start the audio hub.
@@ -108,8 +140,16 @@ impl VoiceState {
         let (mic_tx, mic_rx) = mpsc::unbounded_channel();
         let (speaker_tx, speaker_rx) = mpsc::unbounded_channel();
 
-        // Create and start the pipeline
-        let mut pipeline = VoicePipeline::new(connection, mic_rx, speaker_tx)?;
+        // Create and start the pipeline with quality-derived config
+        let config = voice_config_for_quality(self.quality);
+        tracing::debug!(
+            peer_id = %peer_id,
+            initial_bitrate = config.initial_bitrate_bps,
+            max_bitrate = config.max_bitrate_bps,
+            min_bitrate = config.min_bitrate_bps,
+            "creating voice pipeline with config"
+        );
+        let mut pipeline = VoicePipeline::new(connection, config, mic_rx, speaker_tx)?;
         pipeline.set_muted(self.muted);
         pipeline.start().await?;
 

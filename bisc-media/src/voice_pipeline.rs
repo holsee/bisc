@@ -7,22 +7,51 @@
 
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
-use bisc_protocol::media::MediaPacket;
+use bisc_protocol::media::{decode_media_control, encode_media_control, MediaControl, MediaPacket};
 use tokio::sync::{mpsc, watch};
 use tokio::task::JoinHandle;
 
+use crate::congestion::{CongestionConfig, CongestionEstimator};
+use crate::control::ReceiverReportGenerator;
 use crate::jitter_buffer::JitterBuffer;
 use crate::opus_codec::{OpusDecoder, OpusEncoder, SAMPLES_PER_FRAME};
 use crate::transport::MediaTransport;
+
+/// Voice audio stream ID.
+const VOICE_STREAM_ID: u8 = 0;
+
+/// Stream ID used for control messages (receiver reports, keyframe requests).
+const CONTROL_STREAM_ID: u8 = 255;
 
 /// Commands that can be sent to the voice send loop.
 #[derive(Debug)]
 pub enum VoiceCommand {
     /// Change the encoder's target bitrate (bps).
     SetBitrate(u32),
+}
+
+/// Configuration for the voice pipeline.
+#[derive(Debug, Clone)]
+pub struct VoiceConfig {
+    /// Initial encoder bitrate in bits per second.
+    pub initial_bitrate_bps: u32,
+    /// Maximum bitrate for congestion control.
+    pub max_bitrate_bps: u32,
+    /// Minimum bitrate for congestion control.
+    pub min_bitrate_bps: u32,
+}
+
+impl Default for VoiceConfig {
+    fn default() -> Self {
+        Self {
+            initial_bitrate_bps: 64_000,
+            max_bitrate_bps: 128_000,
+            min_bitrate_bps: 16_000,
+        }
+    }
 }
 
 /// Metrics exposed for observability and test assertions.
@@ -54,6 +83,7 @@ impl PipelineMetrics {
 /// samples to `audio_out_tx`.
 pub struct VoicePipeline {
     connection: iroh::endpoint::Connection,
+    config: VoiceConfig,
     audio_in_rx: Option<mpsc::UnboundedReceiver<Vec<f32>>>,
     audio_out_tx: Option<mpsc::UnboundedSender<Vec<f32>>>,
     muted: Arc<AtomicBool>,
@@ -74,6 +104,7 @@ impl VoicePipeline {
     /// - `audio_out_tx`: receives decoded frames (to `AudioOutput` or test collector).
     pub fn new(
         connection: iroh::endpoint::Connection,
+        config: VoiceConfig,
         audio_in_rx: mpsc::UnboundedReceiver<Vec<f32>>,
         audio_out_tx: mpsc::UnboundedSender<Vec<f32>>,
     ) -> Result<Self> {
@@ -82,11 +113,13 @@ impl VoicePipeline {
 
         tracing::info!(
             peer = %connection.remote_id(),
+            initial_bitrate = config.initial_bitrate_bps,
             "voice pipeline created"
         );
 
         Ok(Self {
             connection,
+            config,
             audio_in_rx: Some(audio_in_rx),
             audio_out_tx: Some(audio_out_tx),
             muted: Arc::new(AtomicBool::new(false)),
@@ -115,20 +148,26 @@ impl VoicePipeline {
         let (command_tx, command_rx) = mpsc::unbounded_channel();
         self.command_tx = command_tx;
 
+        // In-process channel for forwarding control packets from recv_loop to send_loop
+        let (control_fwd_tx, control_fwd_rx) = mpsc::unbounded_channel();
+
         // --- Send task ---
         let send_handle = tokio::spawn(send_loop(
             self.connection.clone(),
             audio_in_rx,
             command_rx,
+            control_fwd_rx,
             Arc::clone(&self.muted),
             Arc::clone(&self.metrics),
             self.shutdown_rx.clone(),
+            self.config.clone(),
         ));
 
         // --- Receive task ---
         let recv_handle = tokio::spawn(recv_loop(
             self.connection.clone(),
             audio_out_tx,
+            control_fwd_tx,
             Arc::clone(&self.volume_bits),
             Arc::clone(&self.metrics),
             self.shutdown_rx.clone(),
@@ -189,15 +228,21 @@ impl VoicePipeline {
 }
 
 /// Send loop: read audio frames → encode → packetize → send.
+///
+/// Also receives control messages (ReceiverReports) forwarded from the recv_loop
+/// and feeds them into a `CongestionEstimator` to adapt the encoder bitrate.
+#[allow(clippy::too_many_arguments)]
 async fn send_loop(
     connection: iroh::endpoint::Connection,
     mut audio_in_rx: mpsc::UnboundedReceiver<Vec<f32>>,
     mut command_rx: mpsc::UnboundedReceiver<VoiceCommand>,
+    mut control_rx: mpsc::UnboundedReceiver<MediaControl>,
     muted: Arc<AtomicBool>,
     metrics: Arc<PipelineMetrics>,
     mut shutdown: watch::Receiver<bool>,
+    config: VoiceConfig,
 ) {
-    let mut encoder = match OpusEncoder::new(1, 64_000) {
+    let mut encoder = match OpusEncoder::new(1, config.initial_bitrate_bps) {
         Ok(e) => e,
         Err(e) => {
             tracing::error!(error = %e, "failed to create Opus encoder");
@@ -206,6 +251,14 @@ async fn send_loop(
     };
     let mut transport = MediaTransport::new(connection);
     let mut timestamp: u32 = 0;
+
+    // Congestion estimator for adaptive bitrate
+    let mut estimator = CongestionEstimator::new(CongestionConfig {
+        min_bitrate_bps: config.min_bitrate_bps,
+        max_bitrate_bps: config.max_bitrate_bps,
+        initial_bitrate_bps: config.initial_bitrate_bps,
+        ..CongestionConfig::default()
+    });
 
     tracing::debug!("send loop started");
 
@@ -231,6 +284,46 @@ async fn send_loop(
                     }
                 }
             }
+            ctrl = control_rx.recv() => {
+                match ctrl {
+                    Some(MediaControl::ReceiverReport {
+                        packets_received,
+                        packets_lost,
+                        jitter,
+                        rtt_estimate_ms,
+                        ..
+                    }) => {
+                        if let Some(rec) = estimator.on_report(
+                            packets_received,
+                            packets_lost,
+                            jitter,
+                            rtt_estimate_ms,
+                            Instant::now(),
+                        ) {
+                            let old = estimator.current_bitrate_bps();
+                            tracing::info!(
+                                old_bitrate = old,
+                                new_bitrate = rec.target_bitrate_bps,
+                                loss_rate = %estimator.loss_rate(),
+                                "voice bitrate adapted"
+                            );
+                            if let Err(e) = encoder.set_bitrate(rec.target_bitrate_bps) {
+                                tracing::warn!(
+                                    error = %e,
+                                    bps = rec.target_bitrate_bps,
+                                    "failed to apply adapted voice bitrate"
+                                );
+                            }
+                        }
+                    }
+                    Some(_) => {
+                        // Ignore non-report control messages in voice send loop
+                    }
+                    None => {
+                        tracing::debug!("control channel closed");
+                    }
+                }
+            }
             frame = audio_in_rx.recv() => {
                 let Some(samples) = frame else {
                     tracing::debug!("audio input channel closed");
@@ -247,7 +340,7 @@ async fn send_loop(
                         metrics.frames_encoded.fetch_add(1, Ordering::Relaxed);
 
                         let mut packet = MediaPacket {
-                            stream_id: 0,
+                            stream_id: VOICE_STREAM_ID,
                             sequence: 0, // assigned by transport
                             timestamp,
                             fragment_index: 0,
@@ -274,9 +367,13 @@ async fn send_loop(
 }
 
 /// Receive loop: recv packets → jitter buffer → decode → apply volume → output.
+///
+/// Also sends periodic `ReceiverReport` control messages to the remote sender
+/// (via datagrams) and forwards incoming control packets to the send loop.
 async fn recv_loop(
     connection: iroh::endpoint::Connection,
     audio_out_tx: mpsc::UnboundedSender<Vec<f32>>,
+    control_fwd_tx: mpsc::UnboundedSender<MediaControl>,
     volume_bits: Arc<AtomicU32>,
     metrics: Arc<PipelineMetrics>,
     mut shutdown: watch::Receiver<bool>,
@@ -289,10 +386,17 @@ async fn recv_loop(
         }
     };
     let mut transport = MediaTransport::new(connection);
-    let mut jitter_buffer = JitterBuffer::new(0, SAMPLES_PER_FRAME as u32, 20);
+    let mut jitter_buffer = JitterBuffer::new(VOICE_STREAM_ID, SAMPLES_PER_FRAME as u32, 20);
 
     let mut playout_interval = tokio::time::interval(Duration::from_millis(20));
     playout_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+    // Receiver report generator — sends reports every ~1 second
+    let mut report_gen = ReceiverReportGenerator::new(VOICE_STREAM_ID);
+    let mut report_interval = tokio::time::interval(Duration::from_secs(1));
+    report_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    // Skip the first immediate tick
+    report_interval.tick().await;
 
     tracing::debug!("receive loop started");
 
@@ -308,8 +412,16 @@ async fn recv_loop(
             result = transport.recv_media_packet() => {
                 match result {
                     Ok(packet) => {
-                        metrics.packets_received.fetch_add(1, Ordering::Relaxed);
-                        jitter_buffer.push(packet);
+                        if packet.stream_id == CONTROL_STREAM_ID {
+                            // Decode control message and forward to send loop
+                            if let Ok(ctrl) = decode_media_control(&packet.payload) {
+                                let _ = control_fwd_tx.send(ctrl);
+                            }
+                        } else if packet.stream_id == VOICE_STREAM_ID {
+                            metrics.packets_received.fetch_add(1, Ordering::Relaxed);
+                            jitter_buffer.push(packet);
+                        }
+                        // Other stream IDs are silently ignored (may belong to video)
                     }
                     Err(e) => {
                         tracing::debug!(error = %e, "transport recv ended");
@@ -334,6 +446,28 @@ async fn recv_loop(
                         Err(e) => {
                             tracing::warn!(error = %e, "opus decode failed, skipping frame");
                         }
+                    }
+                }
+            }
+            _ = report_interval.tick() => {
+                // Generate and send a receiver report to the remote peer
+                let report = report_gen.generate_report(
+                    &transport.metrics,
+                    jitter_buffer.stats(),
+                    jitter_buffer.average_jitter_ms(),
+                );
+                if let Ok(payload) = encode_media_control(&report) {
+                    let mut pkt = MediaPacket {
+                        stream_id: CONTROL_STREAM_ID,
+                        sequence: 0,
+                        timestamp: 0,
+                        fragment_index: 0,
+                        fragment_count: 1,
+                        is_keyframe: false,
+                        payload,
+                    };
+                    if let Err(e) = transport.send_media_packet(&mut pkt) {
+                        tracing::debug!(error = %e, "failed to send receiver report");
                     }
                 }
             }
@@ -406,5 +540,31 @@ mod tests {
         assert_eq!(m.frames_decoded.load(Ordering::Relaxed), 2);
         assert_eq!(m.packets_sent.load(Ordering::Relaxed), 3);
         assert_eq!(m.packets_received.load(Ordering::Relaxed), 4);
+    }
+
+    #[test]
+    fn default_voice_config() {
+        let config = VoiceConfig::default();
+        assert_eq!(config.initial_bitrate_bps, 64_000);
+        assert_eq!(config.max_bitrate_bps, 128_000);
+        assert_eq!(config.min_bitrate_bps, 16_000);
+    }
+
+    #[test]
+    fn congestion_config_from_voice_config() {
+        let vc = VoiceConfig {
+            initial_bitrate_bps: 48_000,
+            max_bitrate_bps: 96_000,
+            min_bitrate_bps: 16_000,
+        };
+        let cc = CongestionConfig {
+            min_bitrate_bps: vc.min_bitrate_bps,
+            max_bitrate_bps: vc.max_bitrate_bps,
+            initial_bitrate_bps: vc.initial_bitrate_bps,
+            ..CongestionConfig::default()
+        };
+        assert_eq!(cc.initial_bitrate_bps, 48_000);
+        assert_eq!(cc.max_bitrate_bps, 96_000);
+        assert_eq!(cc.min_bitrate_bps, 16_000);
     }
 }

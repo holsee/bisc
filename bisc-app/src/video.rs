@@ -19,6 +19,39 @@ use tokio::task::JoinHandle;
 #[cfg(feature = "video-codec")]
 use bisc_media::video_pipeline::{VideoConfig, VideoPipeline};
 
+use crate::settings::Quality;
+
+/// Map a `Quality` preset to a `VideoConfig` with appropriate resolution/bitrate bounds.
+#[cfg(feature = "video-codec")]
+pub fn video_config_for_quality(quality: Quality) -> VideoConfig {
+    match quality {
+        Quality::Low => VideoConfig {
+            width: 480,
+            height: 360,
+            framerate: 24,
+            bitrate_bps: 128_000,
+            max_bitrate_bps: 256_000,
+            min_bitrate_bps: 64_000,
+        },
+        Quality::Medium => VideoConfig {
+            width: 1280,
+            height: 720,
+            framerate: 30,
+            bitrate_bps: 512_000,
+            max_bitrate_bps: 1_000_000,
+            min_bitrate_bps: 128_000,
+        },
+        Quality::High => VideoConfig {
+            width: 1920,
+            height: 1080,
+            framerate: 30,
+            bitrate_bps: 2_000_000,
+            max_bitrate_bps: 4_000_000,
+            min_bitrate_bps: 500_000,
+        },
+    }
+}
+
 /// Manages video state: camera, pipelines, and frame delivery.
 pub struct VideoState {
     /// Whether camera capture is active.
@@ -39,6 +72,8 @@ pub struct VideoState {
     camera_handle: Option<JoinHandle<()>>,
     /// Frame relay task handles (per-peer: pipeline output → shared state).
     relay_handles: HashMap<String, JoinHandle<()>>,
+    /// Current video quality preset (used when creating new pipelines).
+    quality: Quality,
 }
 
 impl VideoState {
@@ -54,6 +89,7 @@ impl VideoState {
             camera_tx: None,
             camera_handle: None,
             relay_handles: HashMap::new(),
+            quality: Quality::Medium,
         }
     }
 
@@ -66,6 +102,12 @@ impl VideoState {
     /// Get the local camera preview frame (for UI rendering).
     pub fn local_frame(&self) -> &Arc<Mutex<Option<RawFrame>>> {
         &self.local_frame
+    }
+
+    /// Set the video quality preset. Affects newly created pipelines.
+    pub fn set_quality(&mut self, quality: Quality) {
+        tracing::info!(?quality, "video quality preset changed");
+        self.quality = quality;
     }
 
     /// Start camera capture.
@@ -136,7 +178,16 @@ impl VideoState {
             return Ok(());
         }
 
-        let config = VideoConfig::default();
+        let config = video_config_for_quality(self.quality);
+        tracing::debug!(
+            peer_id = %peer_id,
+            width = config.width,
+            height = config.height,
+            bitrate = config.bitrate_bps,
+            max_bitrate = config.max_bitrate_bps,
+            min_bitrate = config.min_bitrate_bps,
+            "creating video pipeline with quality-derived config"
+        );
 
         // Create channels for this pipeline
         let (frame_in_tx, frame_in_rx) = mpsc::unbounded_channel();
