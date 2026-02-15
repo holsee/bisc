@@ -54,11 +54,11 @@ With 48 tasks implemented by automated agents, the application has never been va
 
 ## Acceptance Criteria
 
-- [ ] Channel create/join works between two instances
-- [ ] Peers see each other in the call screen
-- [ ] Voice pipeline starts (verified via `PeerConnected` and voice pipeline logs)
-- [ ] File share + download works end-to-end
-- [ ] Settings save and load correctly
-- [ ] Leave and rejoin works without crash
-- [ ] No panics or `ERROR` level log messages during normal operation
-- [ ] Application runs stably for at least 2 minutes in a channel
+- [x] Channel create/join works between two instances
+- [x] Peers see each other in the call screen
+- [x] Voice pipeline starts (verified via `PeerConnected` and voice pipeline logs)
+- [x] File share + download works end-to-end
+- [x] Settings save and load correctly
+- [x] Leave and rejoin works without crash
+- [x] No panics or `ERROR` level log messages during normal operation
+- [x] Application runs stably for at least 2 minutes in a channel
