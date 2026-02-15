@@ -72,13 +72,13 @@ bisc --data-dir /tmp/bisc-b
 
 ## Acceptance Criteria
 
-- [ ] `bisc --data-dir /tmp/test-instance` uses `/tmp/test-instance/config/` for settings and `/tmp/test-instance/data/` as default storage dir
-- [ ] Running without `--data-dir` uses platform defaults (unchanged behaviour)
-- [ ] Config and storage directories are logged at `info` level on startup
-- [ ] Two instances with different `--data-dir` values can run simultaneously without conflict
-- [ ] Storage directory is editable in Settings screen (text input + folder picker)
-- [ ] Channel screen shows the current file exchange directory
-- [ ] Downloaded files are exported to `storage_dir` on disk after blob download completes
-- [ ] `cargo build --workspace` compiles
-- [ ] `cargo fmt --all --check` passes
-- [ ] `cargo clippy --workspace -- -D warnings` passes
+- [x] `bisc --data-dir /tmp/test-instance` uses `/tmp/test-instance/config/` for settings and `/tmp/test-instance/data/` as default storage dir
+- [x] Running without `--data-dir` uses platform defaults (unchanged behaviour)
+- [x] Config and storage directories are logged at `info` level on startup
+- [x] Two instances with different `--data-dir` values can run simultaneously without conflict
+- [x] Storage directory is editable in Settings screen (text input + folder picker)
+- [x] Channel screen shows the current file exchange directory
+- [x] Downloaded files are exported to `storage_dir` on disk after blob download completes
+- [x] `cargo build --workspace` compiles
+- [x] `cargo fmt --all --check` passes
+- [x] `cargo clippy --workspace -- -D warnings` passes

@@ -43,6 +43,7 @@ bytemuck = { version = "1", features = ["derive"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
 tempfile = "3"
 toml = "0.8"
+clap = { version = "4", features = ["derive"] }
 directories = "6"
 
 # Internal crates

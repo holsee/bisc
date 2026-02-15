@@ -19,6 +19,8 @@ pub enum Message {
     JoinChannel,
     /// User clicked "Copy Ticket".
     CopyTicket,
+    /// User clicked to change storage dir (navigate to settings).
+    ChangeStorageDir,
 }
 
 /// State of the channel screen.
@@ -34,6 +36,8 @@ pub struct ChannelScreen {
     pub error: Option<String>,
     /// Whether a create/join operation is in progress.
     pub connecting: bool,
+    /// Current file exchange directory (display only).
+    pub storage_dir: String,
 }
 
 impl Default for ChannelScreen {
@@ -44,6 +48,7 @@ impl Default for ChannelScreen {
             created_ticket: None,
             error: None,
             connecting: false,
+            storage_dir: String::new(),
         }
     }
 }
@@ -62,13 +67,16 @@ pub enum Action {
     },
     /// Request to copy text to clipboard.
     CopyToClipboard(String),
+    /// Navigate to settings to change storage directory.
+    OpenSettings,
 }
 
 impl ChannelScreen {
-    /// Create a new channel screen with the given display name.
-    pub fn new(display_name: String) -> Self {
+    /// Create a new channel screen with the given display name and storage directory.
+    pub fn new(display_name: String, storage_dir: String) -> Self {
         Self {
             display_name,
+            storage_dir,
             ..Default::default()
         }
     }
@@ -131,6 +139,7 @@ impl ChannelScreen {
                     Action::None
                 }
             }
+            Message::ChangeStorageDir => Action::OpenSettings,
         }
     }
 
@@ -142,6 +151,20 @@ impl ChannelScreen {
             .on_input(Message::DisplayNameChanged)
             .padding(10)
             .width(Length::Fixed(300.0));
+
+        // File exchange directory display
+        let storage_info = if self.storage_dir.is_empty() {
+            row![].into()
+        } else {
+            let storage_label = text("Files:").size(11);
+            let storage_path = text(&self.storage_dir).size(11);
+            let change_btn = button(text("Change").size(11)).on_press(Message::ChangeStorageDir);
+            row![storage_label, storage_path, change_btn]
+                .spacing(6)
+                .align_y(Alignment::Center)
+                .into()
+        };
+        let storage_display: Element<'_, Message, Theme, Renderer> = storage_info;
 
         let mut create_btn = button(text("Create Channel"));
         if !self.connecting {
@@ -182,6 +205,7 @@ impl ChannelScreen {
         let content = column![
             title,
             name_input,
+            storage_display,
             create_btn,
             ticket_section,
             separator,
@@ -216,7 +240,7 @@ mod tests {
 
     #[test]
     fn create_channel_emits_action() {
-        let mut screen = ChannelScreen::new("Alice".to_string());
+        let mut screen = ChannelScreen::new("Alice".to_string(), String::new());
         let action = screen.update(Message::CreateChannel);
         assert_eq!(
             action,
@@ -229,7 +253,7 @@ mod tests {
 
     #[test]
     fn create_channel_empty_name_shows_error() {
-        let mut screen = ChannelScreen::new("".to_string());
+        let mut screen = ChannelScreen::new("".to_string(), String::new());
         let action = screen.update(Message::CreateChannel);
         assert_eq!(action, Action::None);
         assert!(screen.error.is_some());
@@ -238,7 +262,7 @@ mod tests {
 
     #[test]
     fn join_empty_ticket_shows_error() {
-        let mut screen = ChannelScreen::new("Bob".to_string());
+        let mut screen = ChannelScreen::new("Bob".to_string(), String::new());
         screen.ticket_input = "".to_string();
         let action = screen.update(Message::JoinChannel);
         assert_eq!(action, Action::None);
@@ -248,7 +272,7 @@ mod tests {
 
     #[test]
     fn join_with_ticket_emits_action() {
-        let mut screen = ChannelScreen::new("Bob".to_string());
+        let mut screen = ChannelScreen::new("Bob".to_string(), String::new());
         screen.ticket_input = "some-ticket-data".to_string();
         let action = screen.update(Message::JoinChannel);
         assert_eq!(
@@ -262,7 +286,7 @@ mod tests {
 
     #[test]
     fn join_empty_name_shows_error() {
-        let mut screen = ChannelScreen::new("  ".to_string());
+        let mut screen = ChannelScreen::new("  ".to_string(), String::new());
         screen.ticket_input = "ticket".to_string();
         let action = screen.update(Message::JoinChannel);
         assert_eq!(action, Action::None);
@@ -310,7 +334,7 @@ mod tests {
 
     #[test]
     fn create_sets_connecting() {
-        let mut screen = ChannelScreen::new("Alice".to_string());
+        let mut screen = ChannelScreen::new("Alice".to_string(), String::new());
         assert!(!screen.connecting);
         screen.update(Message::CreateChannel);
         assert!(screen.connecting);
@@ -318,7 +342,7 @@ mod tests {
 
     #[test]
     fn join_sets_connecting() {
-        let mut screen = ChannelScreen::new("Bob".to_string());
+        let mut screen = ChannelScreen::new("Bob".to_string(), String::new());
         screen.ticket_input = "ticket".to_string();
         assert!(!screen.connecting);
         screen.update(Message::JoinChannel);
@@ -327,7 +351,7 @@ mod tests {
 
     #[test]
     fn error_clears_connecting() {
-        let mut screen = ChannelScreen::new("Alice".to_string());
+        let mut screen = ChannelScreen::new("Alice".to_string(), String::new());
         screen.connecting = true;
         screen.set_error("connection failed".to_string());
         assert!(!screen.connecting);

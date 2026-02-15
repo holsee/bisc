@@ -6,6 +6,7 @@ mod video;
 mod voice;
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use app::{AppAction, AppMessage, Screen};
@@ -14,18 +15,30 @@ use bisc_net::{BiscEndpoint, Channel, ChannelEvent, GossipHandle, MediaProtocol}
 use bisc_protocol::channel::ChannelMessage;
 use bisc_protocol::ticket::BiscTicket;
 use bisc_protocol::types::EndpointId;
+use clap::Parser;
 use file_sharing::FileSharingState;
 use iced::futures::Stream;
 use iroh::protocol::Router;
 use iroh_blobs::store::mem::MemStore;
 use screen_share::ScreenShareState;
-use settings::Settings;
+use settings::{AppDirs, Settings};
 use tokio::sync::mpsc;
 use video::VideoState;
 use voice::VoiceState;
 
 use iced::{Element, Subscription};
 use tracing_subscriber::EnvFilter;
+
+/// bisc — decentralized voice/video/file sharing
+#[derive(Parser, Debug)]
+#[command(name = "bisc", about = "Decentralized voice, video & file sharing")]
+struct Cli {
+    /// Override the data directory for this instance.
+    /// Enables running multiple instances simultaneously.
+    /// Config stored in <data-dir>/config/, files in <data-dir>/data/.
+    #[arg(long)]
+    data_dir: Option<PathBuf>,
+}
 
 /// Convert from UI quality enum to settings quality enum.
 fn ui_quality_to_settings(q: bisc_ui::screens::settings::Quality) -> settings::Quality {
@@ -240,6 +253,7 @@ async fn start_peer_video(
 struct BiscApp {
     app: app::App,
     settings: Settings,
+    dirs: AppDirs,
     net: Arc<Mutex<Option<Net>>>,
     /// Channel event receiver, extracted from Channel on create/join.
     channel_event_rx: Arc<Mutex<Option<mpsc::UnboundedReceiver<ChannelEvent>>>>,
@@ -259,18 +273,28 @@ struct BiscApp {
     share_frames: Arc<Mutex<HashMap<String, RawFrame>>>,
 }
 
-impl Default for BiscApp {
-    fn default() -> Self {
-        let settings = Settings::load();
+impl BiscApp {
+    fn new(dirs: AppDirs) -> Self {
+        let settings = Settings::load(&dirs);
+        let storage_dir_str = settings.storage_dir.to_string_lossy().to_string();
         let video_state = VideoState::new();
         let peer_frames = video_state.peer_frames().clone();
         let local_frame = video_state.local_frame().clone();
         let screen_share_state = ScreenShareState::new();
         let share_frames = screen_share_state.share_frames().clone();
         let file_sharing_state = FileSharingState::new(settings.storage_dir.clone());
+
+        let mut app = app::App::default();
+        // Sync app state with loaded settings
+        app.channel_screen.display_name = settings.display_name.clone();
+        app.channel_screen.storage_dir = storage_dir_str.clone();
+        app.settings_screen.display_name = settings.display_name.clone();
+        app.settings_screen.storage_dir = storage_dir_str;
+
         Self {
-            app: app::App::default(),
+            app,
             settings,
+            dirs,
             net: Arc::new(Mutex::new(None)),
             channel_event_rx: Arc::new(Mutex::new(None)),
             voice: Arc::new(tokio::sync::Mutex::new(VoiceState::new())),
@@ -457,12 +481,13 @@ impl BiscApp {
             AppAction::CopyToClipboard(text) => iced::clipboard::write(text),
             AppAction::SaveSettings => {
                 self.settings.display_name = self.app.settings_screen.display_name.clone();
+                self.settings.storage_dir = PathBuf::from(&self.app.settings_screen.storage_dir);
                 // Convert UI quality enums to settings quality enums
                 self.settings.video_quality =
                     ui_quality_to_settings(self.app.settings_screen.video_quality);
                 self.settings.audio_quality =
                     ui_quality_to_settings(self.app.settings_screen.audio_quality);
-                if let Err(e) = self.settings.save() {
+                if let Err(e) = self.settings.save(&self.dirs) {
                     tracing::error!(error = %e, "failed to save settings");
                 }
                 // Propagate quality changes to voice/video state
@@ -784,13 +809,15 @@ impl BiscApp {
                 )
             }
             AppAction::DownloadFile(hash_hex) => {
-                // Gather peer node IDs that may have this file
-                let peers_with_file: Vec<String> = self
+                // Gather peer node IDs and file name
+                let file_info = self
                     .app
                     .files_panel
                     .files
                     .iter()
-                    .find(|f| f.hash == hash_hex)
+                    .find(|f| f.hash == hash_hex);
+
+                let peers_with_file: Vec<String> = file_info
                     .map(|f| {
                         let mut peers = f.available_from.clone();
                         if !f.sender.is_empty() && !peers.contains(&f.sender) {
@@ -800,8 +827,13 @@ impl BiscApp {
                     })
                     .unwrap_or_default();
 
+                let file_name = file_info
+                    .map(|f| f.name.clone())
+                    .unwrap_or_else(|| "unknown".to_string());
+
                 let file_sharing = Arc::clone(&self.file_sharing);
                 let hash_for_result = hash_hex.clone();
+                let storage_dir = self.settings.storage_dir.clone();
 
                 // Extract blob_store and endpoint from net
                 let (blob_store, endpoint) = {
@@ -846,6 +878,10 @@ impl BiscApp {
                         )
                         .await?;
 
+                        // Export blob to storage directory
+                        let destination = storage_dir.join(&file_name);
+                        file_sharing::export_blob(&blob_store, file_hash, &destination).await?;
+
                         // Mark as complete in the metadata store
                         {
                             let fs = file_sharing.lock().await;
@@ -865,6 +901,21 @@ impl BiscApp {
                     },
                 )
             }
+            AppAction::BrowseStorageDir => iced::Task::perform(
+                async {
+                    let handle = rfd::AsyncFileDialog::new()
+                        .set_title("Choose file exchange directory")
+                        .pick_folder()
+                        .await;
+                    handle.map(|h| h.path().to_string_lossy().to_string())
+                },
+                |result| match result {
+                    Some(dir) => AppMessage::Settings(
+                        bisc_ui::screens::settings::Message::StorageDirChanged(dir),
+                    ),
+                    None => AppMessage::Settings(bisc_ui::screens::settings::Message::Back),
+                },
+            ),
         }
     }
 
@@ -1090,6 +1141,8 @@ mod tests {
 }
 
 fn main() -> iced::Result {
+    let cli = Cli::parse();
+
     // On Windows, default to DX12 backend to avoid Vulkan driver crashes.
     // Users can still override via WGPU_BACKEND env var.
     #[cfg(target_os = "windows")]
@@ -1107,11 +1160,21 @@ fn main() -> iced::Result {
         )
         .init();
 
-    tracing::info!("bisc starting");
+    let dirs = AppDirs::resolve(cli.data_dir.as_ref());
+    tracing::info!(
+        config_dir = %dirs.config_dir.display(),
+        storage_dir = %dirs.default_storage_dir.display(),
+        data_dir_override = ?cli.data_dir,
+        "bisc starting"
+    );
 
-    iced::application(BiscApp::default, BiscApp::update, BiscApp::view)
-        .subscription(BiscApp::subscription)
-        .title("bisc")
-        .theme(iced::Theme::Dark)
-        .run()
+    iced::application(
+        move || BiscApp::new(dirs.clone()),
+        BiscApp::update,
+        BiscApp::view,
+    )
+    .subscription(BiscApp::subscription)
+    .title("bisc")
+    .theme(iced::Theme::Dark)
+    .run()
 }

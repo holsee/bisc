@@ -44,15 +44,49 @@ pub enum Theme {
     Dark,
 }
 
-impl Default for Settings {
-    fn default() -> Self {
-        let storage_dir = directories::ProjectDirs::from("", "", "bisc")
-            .map(|d| d.data_dir().to_path_buf())
-            .unwrap_or_else(|| PathBuf::from("bisc-data"));
+/// Resolved directory paths for the application instance.
+#[derive(Debug, Clone)]
+pub struct AppDirs {
+    /// Config directory (settings.toml lives here).
+    pub config_dir: PathBuf,
+    /// Default storage directory (SQLite DB, downloaded files).
+    pub default_storage_dir: PathBuf,
+}
 
+impl AppDirs {
+    /// Resolve directories from an optional `--data-dir` override.
+    ///
+    /// With override: config → `<data_dir>/config/`, storage → `<data_dir>/data/`
+    /// Without: platform defaults via the `directories` crate.
+    pub fn resolve(data_dir_override: Option<&PathBuf>) -> Self {
+        match data_dir_override {
+            Some(data_dir) => Self {
+                config_dir: data_dir.join("config"),
+                default_storage_dir: data_dir.join("data"),
+            },
+            None => {
+                let project_dirs = directories::ProjectDirs::from("", "", "bisc");
+                Self {
+                    config_dir: project_dirs
+                        .as_ref()
+                        .map(|d| d.config_dir().to_path_buf())
+                        .unwrap_or_else(|| PathBuf::from("bisc-config")),
+                    default_storage_dir: project_dirs
+                        .as_ref()
+                        .map(|d| d.data_dir().to_path_buf())
+                        .unwrap_or_else(|| PathBuf::from("bisc-data")),
+                }
+            }
+        }
+    }
+}
+
+impl Settings {
+    /// Create default settings using the given app directories.
+    pub fn default_with_dirs(dirs: &AppDirs) -> Self {
         Self {
             display_name: "user".to_string(),
-            storage_dir,
+            storage_dir: dirs.default_storage_dir.clone(),
             video_quality: Quality::Medium,
             audio_quality: Quality::Medium,
             input_device: String::new(),
@@ -60,23 +94,21 @@ impl Default for Settings {
             theme: Theme::Dark,
         }
     }
-}
 
-impl Settings {
-    /// Load settings from the default config path.
+    /// Load settings from the given app directories.
     ///
     /// Returns defaults if the file doesn't exist or is corrupted.
-    pub fn load() -> Self {
-        Self::load_from_dir(Self::config_dir())
+    pub fn load(dirs: &AppDirs) -> Self {
+        Self::load_from_dir(dirs.config_dir.clone(), dirs)
     }
 
-    /// Save settings to the default config path.
-    pub fn save(&self) -> Result<()> {
-        self.save_to_dir(Self::config_dir())
+    /// Save settings to the given app directories.
+    pub fn save(&self, dirs: &AppDirs) -> Result<()> {
+        self.save_to_dir(dirs.config_dir.clone())
     }
 
     /// Load settings from a specific config directory.
-    pub fn load_from_dir(config_dir: PathBuf) -> Self {
+    pub fn load_from_dir(config_dir: PathBuf, dirs: &AppDirs) -> Self {
         let path = config_dir.join("settings.toml");
         match std::fs::read_to_string(&path) {
             Ok(contents) => match toml::from_str(&contents) {
@@ -90,7 +122,7 @@ impl Settings {
                         error = %e,
                         "corrupted settings file, using defaults"
                     );
-                    Self::default()
+                    Self::default_with_dirs(dirs)
                 }
             },
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -98,7 +130,7 @@ impl Settings {
                     path = %path.display(),
                     "settings file not found, using defaults"
                 );
-                Self::default()
+                Self::default_with_dirs(dirs)
             }
             Err(e) => {
                 tracing::warn!(
@@ -106,7 +138,7 @@ impl Settings {
                     error = %e,
                     "failed to read settings file, using defaults"
                 );
-                Self::default()
+                Self::default_with_dirs(dirs)
             }
         }
     }
@@ -128,12 +160,12 @@ impl Settings {
         tracing::info!(path = %path.display(), "settings saved");
         Ok(())
     }
+}
 
-    /// Get the default config directory.
-    fn config_dir() -> PathBuf {
-        directories::ProjectDirs::from("", "", "bisc")
-            .map(|d| d.config_dir().to_path_buf())
-            .unwrap_or_else(|| PathBuf::from("bisc-config"))
+impl Default for Settings {
+    fn default() -> Self {
+        let dirs = AppDirs::resolve(None);
+        Self::default_with_dirs(&dirs)
     }
 }
 
@@ -152,6 +184,13 @@ mod tests {
             .try_init();
     }
 
+    fn test_dirs(config_dir: PathBuf) -> AppDirs {
+        AppDirs {
+            config_dir: config_dir.clone(),
+            default_storage_dir: config_dir.join("data"),
+        }
+    }
+
     #[test]
     fn default_settings_are_valid() {
         init_test_tracing();
@@ -167,7 +206,7 @@ mod tests {
     fn save_and_load_roundtrip() {
         init_test_tracing();
         let tmp = TempDir::new().unwrap();
-        let config_dir = tmp.path().to_path_buf();
+        let dirs = test_dirs(tmp.path().to_path_buf());
 
         let settings = Settings {
             display_name: "Alice".to_string(),
@@ -179,8 +218,8 @@ mod tests {
             theme: Theme::Light,
         };
 
-        settings.save_to_dir(config_dir.clone()).unwrap();
-        let loaded = Settings::load_from_dir(config_dir);
+        settings.save(&dirs).unwrap();
+        let loaded = Settings::load(&dirs);
 
         assert_eq!(settings, loaded);
     }
@@ -190,8 +229,9 @@ mod tests {
         init_test_tracing();
         let tmp = TempDir::new().unwrap();
         let config_dir = tmp.path().join("nonexistent");
+        let dirs = test_dirs(config_dir);
 
-        let loaded = Settings::load_from_dir(config_dir);
+        let loaded = Settings::load(&dirs);
         assert_eq!(loaded.video_quality, Quality::Medium);
         assert_eq!(loaded.theme, Theme::Dark);
     }
@@ -201,11 +241,12 @@ mod tests {
         init_test_tracing();
         let tmp = TempDir::new().unwrap();
         let config_dir = tmp.path().to_path_buf();
+        let dirs = test_dirs(config_dir.clone());
 
         // Write garbage to the settings file
         std::fs::write(config_dir.join("settings.toml"), "{{{{not valid toml}}}}").unwrap();
 
-        let loaded = Settings::load_from_dir(config_dir);
+        let loaded = Settings::load(&dirs);
         assert_eq!(loaded.video_quality, Quality::Medium);
         assert_eq!(loaded.theme, Theme::Dark);
     }
@@ -235,5 +276,52 @@ mod tests {
         assert!(toml_str.contains("input_device"));
         assert!(toml_str.contains("output_device"));
         assert!(toml_str.contains("theme"));
+    }
+
+    #[test]
+    fn data_dir_override_sets_custom_paths() {
+        init_test_tracing();
+        let data_dir = PathBuf::from("/tmp/bisc-instance-2");
+        let dirs = AppDirs::resolve(Some(&data_dir));
+        assert_eq!(
+            dirs.config_dir,
+            PathBuf::from("/tmp/bisc-instance-2/config")
+        );
+        assert_eq!(
+            dirs.default_storage_dir,
+            PathBuf::from("/tmp/bisc-instance-2/data")
+        );
+    }
+
+    #[test]
+    fn no_data_dir_override_uses_platform_defaults() {
+        init_test_tracing();
+        let dirs = AppDirs::resolve(None);
+        // Should not be empty — either platform dirs or fallback
+        assert!(!dirs.config_dir.as_os_str().is_empty());
+        assert!(!dirs.default_storage_dir.as_os_str().is_empty());
+    }
+
+    #[test]
+    fn save_and_load_with_data_dir_override() {
+        init_test_tracing();
+        let tmp = TempDir::new().unwrap();
+        let data_dir = tmp.path().to_path_buf();
+        let dirs = AppDirs::resolve(Some(&data_dir));
+
+        let settings = Settings {
+            display_name: "Charlie".to_string(),
+            storage_dir: dirs.default_storage_dir.clone(),
+            video_quality: Quality::Medium,
+            audio_quality: Quality::Medium,
+            input_device: String::new(),
+            output_device: String::new(),
+            theme: Theme::Dark,
+        };
+
+        settings.save(&dirs).unwrap();
+        let loaded = Settings::load(&dirs);
+        assert_eq!(settings, loaded);
+        assert_eq!(loaded.storage_dir, data_dir.join("data"));
     }
 }

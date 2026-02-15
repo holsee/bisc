@@ -195,7 +195,6 @@ pub async fn download_file(
 }
 
 /// Export a downloaded blob to a filesystem path.
-#[allow(dead_code)]
 pub async fn export_blob(
     blob_store: &MemStore,
     file_hash: [u8; 32],

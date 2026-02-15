@@ -99,15 +99,19 @@ pub struct App {
 impl Default for App {
     fn default() -> Self {
         let settings = crate::settings::Settings::default();
+        let storage_dir_str = settings.storage_dir.to_string_lossy().to_string();
         Self {
             screen: Screen::Channel,
             previous_screen: Screen::Channel,
-            channel_screen: ChannelScreen::new(settings.display_name.clone()),
+            channel_screen: ChannelScreen::new(
+                settings.display_name.clone(),
+                storage_dir_str.clone(),
+            ),
             call_screen: None,
             files_panel: FilesPanel::default(),
             settings_screen: SettingsScreen {
                 display_name: settings.display_name,
-                storage_dir: settings.storage_dir.to_string_lossy().to_string(),
+                storage_dir: storage_dir_str,
                 ..SettingsScreen::default()
             },
         }
@@ -143,6 +147,8 @@ pub enum AppAction {
     DownloadFile(String),
     /// Save settings.
     SaveSettings,
+    /// Browse for storage directory.
+    BrowseStorageDir,
 }
 
 impl App {
@@ -164,6 +170,11 @@ impl App {
                         display_name,
                     },
                     channel::Action::CopyToClipboard(text) => AppAction::CopyToClipboard(text),
+                    channel::Action::OpenSettings => {
+                        self.previous_screen = self.screen.clone();
+                        self.screen = Screen::Settings;
+                        AppAction::None
+                    }
                 }
             }
             AppMessage::Call(msg) => {
@@ -201,9 +212,12 @@ impl App {
                     settings::Action::None => AppAction::None,
                     settings::Action::Save => AppAction::SaveSettings,
                     settings::Action::Back => {
+                        // Sync storage_dir back to channel screen when going back
+                        self.channel_screen.storage_dir = self.settings_screen.storage_dir.clone();
                         self.screen = self.previous_screen.clone();
                         AppAction::None
                     }
+                    settings::Action::BrowseStorageDir => AppAction::BrowseStorageDir,
                 }
             }
             AppMessage::OpenSettings => {

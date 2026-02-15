@@ -41,6 +41,8 @@ impl std::fmt::Display for ThemeChoice {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Message {
     DisplayNameChanged(String),
+    StorageDirChanged(String),
+    BrowseStorageDir,
     InputDeviceSelected(String),
     OutputDeviceSelected(String),
     VideoQualityChanged(Quality),
@@ -56,6 +58,7 @@ pub enum Action {
     None,
     Save,
     Back,
+    BrowseStorageDir,
 }
 
 /// Settings screen state.
@@ -109,6 +112,12 @@ impl SettingsScreen {
                 self.dirty = true;
                 Action::None
             }
+            Message::StorageDirChanged(dir) => {
+                self.storage_dir = dir;
+                self.dirty = true;
+                Action::None
+            }
+            Message::BrowseStorageDir => Action::BrowseStorageDir,
             Message::InputDeviceSelected(device) => {
                 self.input_device = Some(device);
                 self.dirty = true;
@@ -154,9 +163,16 @@ impl SettingsScreen {
             .padding(8)
             .width(Length::Fixed(250.0));
 
-        // Storage directory (read-only display)
-        let storage_label = text("Storage Directory").size(14);
-        let storage_path = text(&self.storage_dir).size(12);
+        // Storage directory (editable)
+        let storage_label = text("File Exchange Directory").size(14);
+        let storage_input = text_input("Storage directory...", &self.storage_dir)
+            .on_input(Message::StorageDirChanged)
+            .padding(8)
+            .width(Length::Fixed(250.0));
+        let browse_btn = button(text("Browse")).on_press(Message::BrowseStorageDir);
+        let storage_row = row![storage_input, browse_btn]
+            .spacing(8)
+            .align_y(Alignment::Center);
 
         // Audio input device
         let input_label = text("Audio Input").size(14);
@@ -260,7 +276,7 @@ impl SettingsScreen {
             name_label,
             name_input,
             storage_label,
-            storage_path,
+            storage_row,
             input_label,
             input_picker,
             output_label,
