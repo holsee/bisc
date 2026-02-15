@@ -40,10 +40,10 @@ The existing integration tests in `bisc-app/tests/integration/` test channel lif
 
 ## Acceptance Criteria
 
-- [ ] Voice call e2e test passes with bidirectional audio verified via metrics
-- [ ] File share e2e test passes with content verification
-- [ ] Multi-peer test passes with 3 peers
-- [ ] Graceful degradation tests pass (no crash on missing hardware)
-- [ ] All tests complete in under 30 seconds
-- [ ] `cargo clippy --workspace -- -D warnings` passes
-- [ ] `cargo fmt --all --check` passes
+- [x] Voice call e2e test passes with bidirectional audio verified via metrics
+- [x] File share e2e test passes with content verification
+- [x] Multi-peer test passes with 3 peers
+- [x] Graceful degradation tests pass (no crash on missing hardware)
+- [x] All tests complete in under 30 seconds
+- [x] `cargo clippy --workspace -- -D warnings` passes
+- [x] `cargo fmt --all --check` passes

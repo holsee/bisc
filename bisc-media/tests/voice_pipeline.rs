@@ -148,8 +148,7 @@ async fn voice_pipeline_end_to_end() {
     let config = bisc_media::voice_pipeline::VoiceConfig::default();
     let mut pipeline_a =
         VoicePipeline::new(conn_a, config.clone(), audio_in_a_rx, audio_out_a_tx).unwrap();
-    let mut pipeline_b =
-        VoicePipeline::new(conn_b, config, audio_in_b_rx, audio_out_b_tx).unwrap();
+    let mut pipeline_b = VoicePipeline::new(conn_b, config, audio_in_b_rx, audio_out_b_tx).unwrap();
 
     pipeline_a.start().await.unwrap();
     pipeline_b.start().await.unwrap();
