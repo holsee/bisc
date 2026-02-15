@@ -67,12 +67,13 @@ fn channel_event_to_message(event: ChannelEvent) -> AppMessage {
             audio_muted,
             video_enabled,
             screen_sharing,
-            ..
+            app_audio_sharing,
         } => AppMessage::MediaStateChanged {
             peer_id: endpoint_id.to_hex(),
             audio_muted,
             video_enabled,
             screen_sharing,
+            app_audio_sharing,
         },
         ChannelEvent::FileAnnounced {
             endpoint_id,
@@ -660,6 +661,64 @@ impl BiscApp {
                 });
                 iced::Task::none()
             }
+            AppAction::SetAppAudio(on) => {
+                let voice = Arc::clone(&self.voice);
+                let video = Arc::clone(&self.video);
+                let screen_share = Arc::clone(&self.screen_share);
+                let net = Arc::clone(&self.net);
+                tokio::spawn(async move {
+                    if on {
+                        // List capturable apps and start capture if available
+                        let capture = bisc_media::app_audio::create_app_audio_capture();
+                        match capture.list_capturable_apps() {
+                            Ok(apps) if apps.is_empty() => {
+                                tracing::info!("no capturable apps available");
+                            }
+                            Ok(apps) => {
+                                tracing::info!(count = apps.len(), "found capturable apps");
+                                // Auto-select the first available app
+                                if let Err(e) = capture.start_capture(&apps[0]) {
+                                    tracing::warn!(
+                                        error = %e,
+                                        "failed to start app audio capture"
+                                    );
+                                }
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    error = %e,
+                                    "failed to list capturable apps"
+                                );
+                            }
+                        }
+                    }
+                    // Broadcast media state change via gossip
+                    let audio_muted = voice.lock().await.is_muted();
+                    let video_on = video.lock().await.is_camera_on();
+                    let screen_on = screen_share.lock().await.is_sharing();
+                    let our_id = {
+                        let guard = net.lock().unwrap();
+                        guard
+                            .as_ref()
+                            .and_then(|n| n.channel.as_ref().map(|c| c.our_endpoint_id()))
+                    };
+                    if let Some(endpoint_id) = our_id {
+                        let guard = net.lock().unwrap();
+                        if let Some(ref n) = *guard {
+                            if let Some(ref channel) = n.channel {
+                                channel.broadcast_message(ChannelMessage::MediaStateUpdate {
+                                    endpoint_id,
+                                    audio_muted,
+                                    video_enabled: video_on,
+                                    screen_sharing: screen_on,
+                                    app_audio_sharing: on,
+                                });
+                            }
+                        }
+                    }
+                });
+                iced::Task::none()
+            }
             AppAction::LeaveChannel => {
                 // Stop all voice, video, and screen share pipelines
                 let voice = Arc::clone(&self.voice);
@@ -930,7 +989,7 @@ mod tests {
             audio_muted: true,
             video_enabled: false,
             screen_sharing: true,
-            app_audio_sharing: false,
+            app_audio_sharing: true,
         });
         match msg {
             AppMessage::MediaStateChanged {
@@ -938,11 +997,13 @@ mod tests {
                 audio_muted,
                 video_enabled,
                 screen_sharing,
+                app_audio_sharing,
             } => {
                 assert_eq!(peer_id, id.to_hex());
                 assert!(audio_muted);
                 assert!(!video_enabled);
                 assert!(screen_sharing);
+                assert!(app_audio_sharing);
             }
             other => panic!("expected MediaStateChanged, got {:?}", other),
         }

@@ -53,6 +53,7 @@ pub enum AppMessage {
         audio_muted: bool,
         video_enabled: bool,
         screen_sharing: bool,
+        app_audio_sharing: bool,
     },
     /// A file was announced by a peer (from subscription).
     FileAnnounced {
@@ -135,6 +136,8 @@ pub enum AppAction {
     SetCamera(bool),
     /// Toggle screen share.
     SetScreenShare(bool),
+    /// Toggle app audio sharing.
+    SetAppAudio(bool),
     /// Open file picker.
     OpenFilePicker,
     /// Download a file.
@@ -172,6 +175,7 @@ impl App {
                         call::Action::SetMic(on) => AppAction::SetMic(on),
                         call::Action::SetCamera(on) => AppAction::SetCamera(on),
                         call::Action::SetScreenShare(on) => AppAction::SetScreenShare(on),
+                        call::Action::SetAppAudio(on) => AppAction::SetAppAudio(on),
                         call::Action::OpenFilePicker => AppAction::OpenFilePicker,
                         call::Action::LeaveChannel => {
                             self.screen = Screen::Channel;
@@ -243,6 +247,7 @@ impl App {
                         mic_enabled,
                         camera_enabled,
                         screen_sharing,
+                        app_audio_sharing: false,
                     });
                 }
                 AppAction::None
@@ -262,9 +267,16 @@ impl App {
                 audio_muted,
                 video_enabled,
                 screen_sharing,
+                app_audio_sharing,
             } => {
                 if let Some(call) = &mut self.call_screen {
-                    call.update_peer_media(&peer_id, !audio_muted, video_enabled, screen_sharing);
+                    call.update_peer_media(
+                        &peer_id,
+                        !audio_muted,
+                        video_enabled,
+                        screen_sharing,
+                        app_audio_sharing,
+                    );
                 }
                 AppAction::None
             }
@@ -458,6 +470,7 @@ mod tests {
             audio_muted: true,
             video_enabled: true,
             screen_sharing: true,
+            app_audio_sharing: false,
         });
 
         let peer = &app.call_screen.as_ref().unwrap().peers[0];
@@ -500,6 +513,7 @@ mod tests {
             audio_muted: false,
             video_enabled: false,
             screen_sharing: false,
+            app_audio_sharing: false,
         });
         // Files panel always exists, so file announcements still work
         app.update(AppMessage::FileAnnounced {
@@ -536,6 +550,7 @@ mod tests {
             audio_muted: true,
             video_enabled: false,
             screen_sharing: true,
+            app_audio_sharing: false,
         });
         let peer = &app.call_screen.as_ref().unwrap().peers[0];
         assert!(!peer.mic_enabled);

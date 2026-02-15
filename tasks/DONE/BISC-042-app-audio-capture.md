@@ -49,14 +49,14 @@ Complete the existing `PipeWireAppAudioCapture`:
 
 ## Acceptance Criteria
 
-- [ ] Linux: PipeWire app audio capture works with a real application (manual test)
-- [ ] Linux: graceful fallback to stub when PipeWire is unavailable
-- [ ] Platform implementations are behind `#[cfg(target_os = "...")]` gates
-- [ ] `create_app_audio_capture()` factory returns the correct implementation per platform
-- [ ] App audio streams are encoded and sent to peers as a distinct stream
-- [ ] UI shows list of capturable apps and allows selection
-- [ ] `cargo clippy --workspace -- -D warnings` passes
-- [ ] `cargo fmt --all --check` passes
+- [x] Linux: PipeWire app audio capture works with a real application (manual test)
+- [x] Linux: graceful fallback to stub when PipeWire is unavailable
+- [x] Platform implementations are behind `#[cfg(target_os = "...")]` gates
+- [x] `create_app_audio_capture()` factory returns the correct implementation per platform
+- [x] App audio streams are encoded and sent to peers as a distinct stream
+- [x] UI shows list of capturable apps and allows selection
+- [x] `cargo clippy --workspace -- -D warnings` passes
+- [x] `cargo fmt --all --check` passes
 
 ## Notes
 

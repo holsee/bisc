@@ -23,6 +23,8 @@ pub struct PeerInfo {
     pub camera_enabled: bool,
     /// Whether the peer is sharing their screen.
     pub screen_sharing: bool,
+    /// Whether the peer is sharing application audio.
+    pub app_audio_sharing: bool,
 }
 
 /// Messages emitted by the call screen.
@@ -34,6 +36,8 @@ pub enum Message {
     ToggleCamera,
     /// Start or stop screen sharing.
     ToggleScreenShare,
+    /// Toggle application audio sharing.
+    ToggleAppAudio,
     /// Open file picker to share a file.
     ShareFile,
     /// Leave the current channel.
@@ -48,6 +52,7 @@ pub struct LocalMediaState {
     pub mic_enabled: bool,
     pub camera_enabled: bool,
     pub screen_sharing: bool,
+    pub app_audio_sharing: bool,
 }
 
 impl Default for LocalMediaState {
@@ -56,6 +61,7 @@ impl Default for LocalMediaState {
             mic_enabled: true,
             camera_enabled: false,
             screen_sharing: false,
+            app_audio_sharing: false,
         }
     }
 }
@@ -71,6 +77,8 @@ pub enum Action {
     SetCamera(bool),
     /// Toggle screen share (true = start).
     SetScreenShare(bool),
+    /// Toggle app audio sharing (true = start).
+    SetAppAudio(bool),
     /// Open file picker for sharing.
     OpenFilePicker,
     /// Leave the channel.
@@ -132,11 +140,13 @@ impl CallScreen {
         mic: bool,
         camera: bool,
         screen_sharing: bool,
+        app_audio_sharing: bool,
     ) {
         if let Some(peer) = self.peers.iter_mut().find(|p| p.id == peer_id) {
             peer.mic_enabled = mic;
             peer.camera_enabled = camera;
             peer.screen_sharing = screen_sharing;
+            peer.app_audio_sharing = app_audio_sharing;
         }
     }
 
@@ -255,6 +265,14 @@ impl CallScreen {
                 );
                 Action::SetScreenShare(self.local_media.screen_sharing)
             }
+            Message::ToggleAppAudio => {
+                self.local_media.app_audio_sharing = !self.local_media.app_audio_sharing;
+                tracing::info!(
+                    sharing = self.local_media.app_audio_sharing,
+                    "toggled app audio"
+                );
+                Action::SetAppAudio(self.local_media.app_audio_sharing)
+            }
             Message::ShareFile => Action::OpenFilePicker,
             Message::LeaveChannel => Action::LeaveChannel,
             Message::CopyTicket => Action::CopyToClipboard(self.ticket.clone()),
@@ -267,11 +285,12 @@ impl CallScreen {
         let mut peer_list = column![text("Peers").size(16)].spacing(5);
         for peer in &self.peers {
             let status = format!(
-                "{} {}{}{}",
+                "{} {}{}{}{}",
                 peer.name,
                 if peer.mic_enabled { "🎤" } else { "🔇" },
                 if peer.camera_enabled { "📹" } else { "" },
                 if peer.screen_sharing { "🖥" } else { "" },
+                if peer.app_audio_sharing { "🔊" } else { "" },
             );
             peer_list = peer_list.push(text(status).size(13));
         }
@@ -309,11 +328,17 @@ impl CallScreen {
         } else {
             "Share Screen"
         };
+        let app_audio_label = if self.local_media.app_audio_sharing {
+            "Stop Audio"
+        } else {
+            "Share Audio"
+        };
 
         let controls = row![
             button(text(mic_label)).on_press(Message::ToggleMic),
             button(text(camera_label)).on_press(Message::ToggleCamera),
             button(text(share_label)).on_press(Message::ToggleScreenShare),
+            button(text(app_audio_label)).on_press(Message::ToggleAppAudio),
             button(text("Share File")).on_press(Message::ShareFile),
             button(text("Leave")).on_press(Message::LeaveChannel),
         ]
@@ -341,6 +366,7 @@ mod tests {
             mic_enabled: true,
             camera_enabled: false,
             screen_sharing: false,
+            app_audio_sharing: false,
         }
     }
 
@@ -351,6 +377,7 @@ mod tests {
         assert!(screen.local_media.mic_enabled);
         assert!(!screen.local_media.camera_enabled);
         assert!(!screen.local_media.screen_sharing);
+        assert!(!screen.local_media.app_audio_sharing);
     }
 
     #[test]
@@ -430,14 +457,34 @@ mod tests {
     }
 
     #[test]
+    fn toggle_app_audio() {
+        let mut screen = CallScreen::new("Alice".to_string(), "t".to_string());
+        assert!(!screen.local_media.app_audio_sharing);
+
+        let action = screen.update(Message::ToggleAppAudio);
+        assert_eq!(action, Action::SetAppAudio(true));
+        assert!(screen.local_media.app_audio_sharing);
+
+        let action = screen.update(Message::ToggleAppAudio);
+        assert_eq!(action, Action::SetAppAudio(false));
+        assert!(!screen.local_media.app_audio_sharing);
+    }
+
+    #[test]
     fn update_peer_media_state() {
         let mut screen = CallScreen::new("Alice".to_string(), "t".to_string());
         screen.peer_joined(test_peer("Bob", "b1"));
 
-        screen.update_peer_media("b1", false, true, true);
+        screen.update_peer_media("b1", false, true, true, false);
         let bob = &screen.peers[0];
         assert!(!bob.mic_enabled);
         assert!(bob.camera_enabled);
         assert!(bob.screen_sharing);
+        assert!(!bob.app_audio_sharing);
+
+        screen.update_peer_media("b1", true, false, false, true);
+        let bob = &screen.peers[0];
+        assert!(bob.mic_enabled);
+        assert!(bob.app_audio_sharing);
     }
 }
