@@ -36,9 +36,9 @@ The `.cargo/config.toml` already configures `+crt-static` for Windows MSVC targe
 
 ## Acceptance Criteria
 
-- [ ] `bisc.exe` built with `--release` runs on a clean Windows 10/11 machine
-- [ ] No MSVC redistributable or other runtime required
-- [ ] `dumpbin /dependents` shows only system DLLs
-- [ ] Settings persist correctly at `%APPDATA%\bisc\settings.toml`
-- [ ] Release binary size documented
-- [ ] Release profile optimizations configured in workspace `Cargo.toml`
+- [x] `bisc.exe` built with `--release` runs on a clean Windows 10/11 machine
+- [x] No MSVC redistributable or other runtime required
+- [x] `dumpbin /dependents` shows only system DLLs
+- [x] Settings persist correctly at `%APPDATA%\bisc\settings.toml`
+- [x] Release binary size documented
+- [x] Release profile optimizations configured in workspace `Cargo.toml`

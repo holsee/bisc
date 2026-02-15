@@ -50,3 +50,8 @@ bisc-net = { path = "bisc-net" }
 bisc-media = { path = "bisc-media" }
 bisc-files = { path = "bisc-files" }
 bisc-ui = { path = "bisc-ui" }
+
+[profile.release]
+strip = true
+lto = "thin"
+codegen-units = 1
