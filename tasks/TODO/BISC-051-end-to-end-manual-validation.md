@@ -1,7 +1,7 @@
 # BISC-051: End-to-End Manual Validation
 
 **Phase**: 9 — Validation & Fixes
-**Depends on**: BISC-049, BISC-050
+**Depends on**: BISC-049, BISC-050, BISC-057, BISC-058, BISC-059, BISC-060, BISC-061
 
 ## Problem Statement
 
