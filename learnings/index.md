@@ -12,6 +12,9 @@ Discoveries, workarounds, and architectural insights captured during development
 - [iroh Router Owns the Accept Loop](iroh/router-owns-accept-loop.md) — Cannot call endpoint.accept() when a Router is active; must implement ProtocolHandler and register with the Router
 - [Spawn Connection Attempts to Avoid Blocking the Event Loop](iroh/spawn-connection-attempts.md) — QUIC connection setup can block a tokio::select! event loop; spawn as background tasks instead
 - [MemoryLookup for Relay-Disabled Endpoints](iroh/memorylookup-for-relay-disabled.md) — Use MemoryLookup to register peer addresses when RelayMode::Disabled; without it, iroh cannot resolve EndpointIds to socket addresses
+- [Plumbing Exists Does Not Mean Plumbing Is Connected](iroh/plumbing-not-connected.md) — Test helpers may correctly wire subsystems while production code does not; integration tests should test the real initialization path
+- [iroh-blobs as Alternative to Custom File Transfer](iroh/iroh-blobs-for-file-transfer.md) — iroh-blobs provides BLAKE3 verified streaming, resumable downloads, and BlobsProtocol out of the box; replaced ~1300 lines of custom code
+- [endpoint.online() Before Ticket Generation](iroh/endpoint-online-before-ticket.md) — Call endpoint.online() with timeout before generating tickets to ensure relay URLs are included
 
 ## Media
 
@@ -26,3 +29,4 @@ Discoveries, workarounds, and architectural insights captured during development
 ## Platform
 
 - [cpal Requires ALSA Dev Headers on Linux](platform/cpal-alsa-dev-headers.md) — cpal depends on alsa-sys which needs libasound2-dev; made optional behind `audio` feature flag
+- [Windows wgpu Backend Selection](platform/windows-wgpu-backend.md) — Force DX12 backend on Windows to avoid Vulkan driver crashes; set WGPU_BACKEND before Iced initialization

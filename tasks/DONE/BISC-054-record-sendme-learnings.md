@@ -35,7 +35,7 @@ On Windows, wgpu's automatic backend selection may pick Vulkan, which crashes wi
 
 ## Acceptance Criteria
 
-- [ ] Learning files created in appropriate subdirectories (`iroh/`, `platform/`)
-- [ ] No duplication with existing learnings — new files extend, not repeat
-- [ ] `learnings/index.md` updated with links to new entries
-- [ ] Each learning follows the standard format (Context, Discovery, Impact)
+- [x] Learning files created in appropriate subdirectories (`iroh/`, `platform/`)
+- [x] No duplication with existing learnings — new files extend, not repeat
+- [x] `learnings/index.md` updated with links to new entries
+- [x] Each learning follows the standard format (Context, Discovery, Impact)
