@@ -117,6 +117,13 @@ fn channel_event_to_message(event: ChannelEvent) -> AppMessage {
             name: file_name,
             size: file_size,
         },
+        ChannelEvent::FileAvailable {
+            endpoint_id,
+            file_hash,
+        } => AppMessage::FileAvailable {
+            peer_id: endpoint_id.to_hex(),
+            hash: data_encoding::HEXLOWER.encode(&file_hash),
+        },
     }
 }
 
@@ -368,6 +375,43 @@ impl BiscApp {
                     voice.lock().await.remove_peer(&peer_id).await;
                     video.lock().await.remove_peer(&peer_id).await;
                     screen_share.lock().await.remove_peer(&peer_id).await;
+                });
+            }
+            AppMessage::FileAvailable {
+                ref peer_id,
+                ref hash,
+            } => {
+                tracing::debug!(
+                    peer_id = %peer_id,
+                    file_hash = %hash,
+                    "file available from additional peer"
+                );
+            }
+            AppMessage::FileDownloadComplete(ref hash) => {
+                // Broadcast file availability to other peers via gossip
+                let hash_hex = hash.clone();
+                let net = Arc::clone(&self.net);
+                tokio::spawn(async move {
+                    if let Ok(hash_bytes) = data_encoding::HEXLOWER.decode(hash_hex.as_bytes()) {
+                        if hash_bytes.len() == 32 {
+                            let mut file_hash = [0u8; 32];
+                            file_hash.copy_from_slice(&hash_bytes);
+                            let guard = net.lock().unwrap();
+                            if let Some(ref n) = *guard {
+                                if let Some(ref channel) = n.channel {
+                                    let msg = ChannelMessage::FileAvailable {
+                                        endpoint_id: channel.our_endpoint_id(),
+                                        file_hash,
+                                    };
+                                    channel.broadcast_message(msg);
+                                    tracing::info!(
+                                        file_hash = %hash_hex,
+                                        "broadcast file availability after download"
+                                    );
+                                }
+                            }
+                        }
+                    }
                 });
             }
             AppMessage::FileAnnounced {
@@ -1137,6 +1181,24 @@ mod tests {
                 assert_eq!(size, 1024);
             }
             other => panic!("expected FileAnnounced, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn maps_file_available() {
+        init_test_tracing();
+        let id = dummy_endpoint_id();
+        let hash = [0xCC; 32];
+        let msg = channel_event_to_message(ChannelEvent::FileAvailable {
+            endpoint_id: id.clone(),
+            file_hash: hash,
+        });
+        match msg {
+            AppMessage::FileAvailable { peer_id, hash: h } => {
+                assert_eq!(peer_id, id.to_hex());
+                assert_eq!(h, data_encoding::HEXLOWER.encode(&hash));
+            }
+            other => panic!("expected FileAvailable, got {:?}", other),
         }
     }
 

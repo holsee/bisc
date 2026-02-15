@@ -40,6 +40,11 @@ pub enum ChannelMessage {
         file_name: String,
         file_size: u64,
     },
+    /// A peer has downloaded a file and can now serve it.
+    FileAvailable {
+        endpoint_id: EndpointId,
+        file_hash: [u8; 32],
+    },
     TicketRefresh {
         new_bootstrap: EndpointAddr,
     },
@@ -118,6 +123,17 @@ mod tests {
             file_hash: [0xAB; 32],
             file_name: "document.pdf".to_string(),
             file_size: 1_048_576,
+        };
+        let encoded = encode_channel_message(&msg).unwrap();
+        let decoded = decode_channel_message(&encoded).unwrap();
+        assert_eq!(msg, decoded);
+    }
+
+    #[test]
+    fn channel_message_file_available_roundtrip() {
+        let msg = ChannelMessage::FileAvailable {
+            endpoint_id: EndpointId([7; 32]),
+            file_hash: [0xCD; 32],
         };
         let encoded = encode_channel_message(&msg).unwrap();
         let decoded = decode_channel_message(&encoded).unwrap();

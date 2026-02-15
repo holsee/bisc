@@ -132,6 +132,13 @@ impl FilesPanel {
         self.error = None;
     }
 
+    /// Remove a peer from all `available_from` lists (e.g. when they leave the channel).
+    pub fn remove_peer(&mut self, peer_id: &str) {
+        for file in &mut self.files {
+            file.available_from.retain(|p| p != peer_id);
+        }
+    }
+
     /// Handle a message and return any external action.
     pub fn update(&mut self, message: Message) -> Action {
         match message {
@@ -328,6 +335,27 @@ mod tests {
         let mut panel = FilesPanel::default();
         let action = panel.update(Message::ShareFile);
         assert_eq!(action, Action::OpenFilePicker);
+    }
+
+    #[test]
+    fn remove_peer_clears_availability() {
+        let mut panel = FilesPanel::default();
+        panel.file_announced(
+            "hash1".to_string(),
+            "file.txt".to_string(),
+            100,
+            "peer-a".to_string(),
+        );
+        panel.add_peer_for_file("hash1", "peer-b".to_string());
+        panel.add_peer_for_file("hash1", "peer-c".to_string());
+        assert_eq!(panel.files[0].available_from.len(), 2);
+
+        panel.remove_peer("peer-b");
+        assert_eq!(panel.files[0].available_from.len(), 1);
+        assert_eq!(panel.files[0].available_from[0], "peer-c");
+
+        panel.remove_peer("peer-c");
+        assert!(panel.files[0].available_from.is_empty());
     }
 
     #[test]

@@ -59,6 +59,11 @@ pub enum ChannelEvent {
         file_name: String,
         file_size: u64,
     },
+    /// A peer has downloaded a file and can now serve it.
+    FileAvailable {
+        endpoint_id: EndpointId,
+        file_hash: [u8; 32],
+    },
 }
 
 /// A channel represents a group of peers communicating via gossip.
@@ -619,6 +624,18 @@ impl Channel {
                         file_hash,
                         file_name,
                         file_size,
+                    });
+                }
+                ChannelMessage::FileAvailable {
+                    endpoint_id,
+                    file_hash,
+                } => {
+                    if endpoint_id == our_id {
+                        return;
+                    }
+                    let _ = event_tx.send(ChannelEvent::FileAvailable {
+                        endpoint_id,
+                        file_hash,
                     });
                 }
                 ChannelMessage::TicketRefresh { .. } => {

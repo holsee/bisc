@@ -62,6 +62,8 @@ pub enum AppMessage {
         name: String,
         size: u64,
     },
+    /// A file is available from an additional peer.
+    FileAvailable { peer_id: String, hash: String },
     /// A file was successfully shared (local user).
     FileShared {
         hash: String,
@@ -269,6 +271,7 @@ impl App {
                 if let Some(call) = &mut self.call_screen {
                     call.peer_left(&id);
                 }
+                self.files_panel.remove_peer(&id);
                 AppAction::None
             }
             AppMessage::PeerConnected(id) => {
@@ -300,6 +303,10 @@ impl App {
                 size,
             } => {
                 self.files_panel.file_announced(hash, name, size, sender_id);
+                AppAction::None
+            }
+            AppMessage::FileAvailable { peer_id, hash } => {
+                self.files_panel.add_peer_for_file(&hash, peer_id);
                 AppAction::None
             }
             AppMessage::FileShared { hash, name, size } => {
@@ -577,8 +584,67 @@ mod tests {
         });
         assert_eq!(app.files_panel.files.len(), 1);
 
-        // PeerLeft → removes peer
+        // FileAvailable → adds peer to available_from
+        app.update(AppMessage::FileAvailable {
+            peer_id: "b2".to_string(),
+            hash: "hash1".to_string(),
+        });
+        assert!(app.files_panel.files[0]
+            .available_from
+            .contains(&"b2".to_string()));
+
+        // PeerLeft → removes peer and cleans up available_from
         app.update(AppMessage::PeerLeft("a1".to_string()));
         assert!(app.call_screen.as_ref().unwrap().peers.is_empty());
+    }
+
+    #[test]
+    fn file_available_adds_peer_source() {
+        let mut app = app_in_call();
+        app.update(AppMessage::FileAnnounced {
+            sender_id: "peer-a".to_string(),
+            hash: "hash1".to_string(),
+            name: "doc.pdf".to_string(),
+            size: 500,
+        });
+        assert_eq!(app.files_panel.files[0].available_from.len(), 0);
+
+        app.update(AppMessage::FileAvailable {
+            peer_id: "peer-b".to_string(),
+            hash: "hash1".to_string(),
+        });
+        assert_eq!(app.files_panel.files[0].available_from.len(), 1);
+        assert_eq!(app.files_panel.files[0].available_from[0], "peer-b");
+
+        // Duplicate is not added
+        app.update(AppMessage::FileAvailable {
+            peer_id: "peer-b".to_string(),
+            hash: "hash1".to_string(),
+        });
+        assert_eq!(app.files_panel.files[0].available_from.len(), 1);
+    }
+
+    #[test]
+    fn peer_left_removes_from_available_sources() {
+        let mut app = app_in_call();
+        app.update(AppMessage::FileAnnounced {
+            sender_id: "peer-a".to_string(),
+            hash: "hash1".to_string(),
+            name: "doc.pdf".to_string(),
+            size: 500,
+        });
+        app.update(AppMessage::FileAvailable {
+            peer_id: "peer-b".to_string(),
+            hash: "hash1".to_string(),
+        });
+        app.update(AppMessage::FileAvailable {
+            peer_id: "peer-c".to_string(),
+            hash: "hash1".to_string(),
+        });
+        assert_eq!(app.files_panel.files[0].available_from.len(), 2);
+
+        app.update(AppMessage::PeerLeft("peer-b".to_string()));
+        assert_eq!(app.files_panel.files[0].available_from.len(), 1);
+        assert_eq!(app.files_panel.files[0].available_from[0], "peer-c");
     }
 }

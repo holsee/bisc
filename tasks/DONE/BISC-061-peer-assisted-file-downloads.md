@@ -29,11 +29,11 @@ When a peer leaves the channel, remove them from all `available_from` lists. Thi
 
 ## Acceptance Criteria
 
-- [ ] After downloading a file, the peer broadcasts availability via gossip
-- [ ] Other peers add the new source to their `available_from` lists
-- [ ] Download attempts try all known sources, not just the original sender
-- [ ] Peers removed from `available_from` on channel departure
-- [ ] `cargo build --workspace` compiles
-- [ ] `cargo clippy --workspace -- -D warnings` passes
-- [ ] `cargo test --workspace` passes
-- [ ] Integration test: peer A shares file, peer B downloads, peer A goes offline, peer C downloads from peer B
+- [x] After downloading a file, the peer broadcasts availability via gossip
+- [x] Other peers add the new source to their `available_from` lists
+- [x] Download attempts try all known sources, not just the original sender
+- [x] Peers removed from `available_from` on channel departure
+- [x] `cargo build --workspace` compiles
+- [x] `cargo clippy --workspace -- -D warnings` passes
+- [x] `cargo test --workspace` passes
+- [x] Integration test: peer A shares file, peer B downloads, peer A goes offline, peer C downloads from peer B
