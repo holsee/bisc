@@ -24,10 +24,10 @@ sendme addresses this by calling `endpoint.online().await` (with a timeout) befo
 
 ## Acceptance Criteria
 
-- [ ] `endpoint.online()` is awaited before ticket generation in `Channel::create()`
-- [ ] Timeout prevents indefinite hang if relay is unreachable
-- [ ] Ticket contains relay URLs when available
-- [ ] Channel creation still works when relay is unavailable (graceful degradation)
-- [ ] `cargo build --workspace` compiles
-- [ ] `cargo clippy --workspace -- -D warnings` passes
-- [ ] `cargo test --workspace` — all tests pass
+- [x] `endpoint.online()` is awaited before ticket generation in `Channel::create()`
+- [x] Timeout prevents indefinite hang if relay is unreachable
+- [x] Ticket contains relay URLs when available
+- [x] Channel creation still works when relay is unavailable (graceful degradation)
+- [x] `cargo build --workspace` compiles
+- [x] `cargo clippy --workspace -- -D warnings` passes
+- [x] `cargo test --workspace` — all tests pass

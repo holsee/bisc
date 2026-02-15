@@ -15,6 +15,11 @@ use tokio::sync::{mpsc, watch, RwLock};
 use crate::connection::PeerConnection;
 use crate::gossip::{GossipEvent, GossipHandle, TopicSubscription};
 
+/// How long to wait for relay connectivity before generating a ticket.
+/// Relay connections typically establish in < 200ms. With `RelayMode::Disabled`
+/// (tests), `online()` never resolves, so this timeout determines overhead.
+const ONLINE_TIMEOUT: Duration = Duration::from_millis(500);
+
 /// How often to send heartbeats.
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 
@@ -106,6 +111,26 @@ impl Channel {
             },
         };
         sub.broadcast(&announce).await?;
+
+        // Wait for the endpoint to establish relay connectivity so the ticket
+        // contains reachable addresses. Relay connections typically establish
+        // in under 200ms; the 10-second timeout handles slow networks while
+        // RelayMode::Disabled (tests) falls through quickly since online()
+        // never resolves.
+        match tokio::time::timeout(ONLINE_TIMEOUT, endpoint.online()).await {
+            Ok(()) => {
+                tracing::info!("endpoint online, relay connectivity established");
+            }
+            Err(_) => {
+                tracing::debug!("endpoint.online() timed out, proceeding with current addresses");
+            }
+        }
+        let addr = endpoint.addr();
+        tracing::info!(
+            node_id = %addr.id,
+            addrs = addr.addrs.len(),
+            "generating ticket"
+        );
 
         let ticket = Self::make_ticket(&secret, endpoint);
 
