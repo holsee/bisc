@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>bisc</string>
+    <key>CFBundleDisplayName</key>
+    <string>bisc</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.bisc.app</string>
+    <key>CFBundleVersion</key>
+    <string>0.1.0</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.1.0</string>
+    <key>CFBundleExecutable</key>
+    <string>bisc</string>
+    <key>CFBundleIconFile</key>
+    <string>bisc.icns</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>13.0</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>NSSupportsAutomaticGraphicsSwitching</key>
+    <true/>
+
+    <!-- Privacy usage descriptions (required for camera, mic, screen capture) -->
+    <key>NSCameraUsageDescription</key>
+    <string>bisc needs camera access for video calls.</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>bisc needs microphone access for voice and video calls.</string>
+    <key>NSScreenCaptureUsageDescription</key>
+    <string>bisc needs screen recording access for screen sharing.</string>
+</dict>
+</plist>

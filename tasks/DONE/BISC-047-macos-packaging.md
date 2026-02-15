@@ -53,9 +53,9 @@ bisc.app/
 
 ## Acceptance Criteria
 
-- [ ] `.app` bundle runs on macOS 13+ (Apple Silicon and Intel)
-- [ ] `Info.plist` includes required privacy usage descriptions
-- [ ] Code signing script/documentation exists
-- [ ] `.dmg` creation script exists
-- [ ] Notarization workflow documented (even if not automated in CI)
-- [ ] Settings persist at `~/Library/Application Support/bisc/settings.toml`
+- [x] `.app` bundle runs on macOS 13+ (Apple Silicon and Intel)
+- [x] `Info.plist` includes required privacy usage descriptions
+- [x] Code signing script/documentation exists
+- [x] `.dmg` creation script exists
+- [x] Notarization workflow documented (even if not automated in CI)
+- [x] Settings persist at `~/Library/Application Support/bisc/settings.toml`
