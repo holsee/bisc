@@ -15,6 +15,8 @@ Discoveries, workarounds, and architectural insights captured during development
 - [Plumbing Exists Does Not Mean Plumbing Is Connected](iroh/plumbing-not-connected.md) — Test helpers may correctly wire subsystems while production code does not; integration tests should test the real initialization path
 - [iroh-blobs as Alternative to Custom File Transfer](iroh/iroh-blobs-for-file-transfer.md) — iroh-blobs provides BLAKE3 verified streaming, resumable downloads, and BlobsProtocol out of the box; replaced ~1300 lines of custom code
 - [endpoint.online() Before Ticket Generation](iroh/endpoint-online-before-ticket.md) — Call endpoint.online() with timeout before generating tickets to ensure relay URLs are included
+- [Gossip Leave Detection Is Too Slow for Test Timeouts](iroh/gossip-leave-detection-timing.md) — Don't rely on wait_for_peer_left in time-sensitive tests; use sleep after endpoint close instead
+- [FileAvailable Gossip Pattern for Peer-Assisted Downloads](iroh/file-availability-gossip-pattern.md) — 5-step pattern for adding new gossip message types; iroh-blobs serves automatically, only discovery was missing
 
 ## Media
 
