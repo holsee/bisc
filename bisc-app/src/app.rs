@@ -60,7 +60,22 @@ pub enum AppMessage {
         hash: String,
         name: String,
         size: u64,
+        chunk_count: u32,
     },
+    /// A file was successfully shared (local user).
+    FileShared {
+        hash: String,
+        name: String,
+        size: u64,
+    },
+    /// File picker was cancelled by the user.
+    FileShareCancelled,
+    /// File sharing failed.
+    FileShareFailed(String),
+    /// File download completed.
+    FileDownloadComplete(String),
+    /// File download failed.
+    FileDownloadFailed { hash: String, error: String },
     /// Periodic tick to sync video frames from pipelines to the UI.
     VideoFrameTick,
 }
@@ -258,8 +273,30 @@ impl App {
                 hash,
                 name,
                 size,
+                chunk_count,
             } => {
-                self.files_panel.file_announced(hash, name, size, sender_id);
+                self.files_panel
+                    .file_announced(hash, name, size, sender_id, chunk_count);
+                AppAction::None
+            }
+            AppMessage::FileShared { hash, name, size } => {
+                // Add to our files panel as already downloaded (we have it)
+                self.files_panel
+                    .file_announced(hash.clone(), name, size, "You".to_string(), 0);
+                self.files_panel.file_completed(&hash);
+                AppAction::None
+            }
+            AppMessage::FileShareCancelled => AppAction::None,
+            AppMessage::FileShareFailed(error) => {
+                tracing::error!(error = %error, "file sharing failed");
+                AppAction::None
+            }
+            AppMessage::FileDownloadComplete(hash) => {
+                self.files_panel.file_completed(&hash);
+                AppAction::None
+            }
+            AppMessage::FileDownloadFailed { hash, error } => {
+                self.files_panel.download_failed(&hash, error);
                 AppAction::None
             }
             // VideoFrameTick is handled directly by BiscApp before reaching here.
@@ -437,6 +474,7 @@ mod tests {
             hash: "abc123".to_string(),
             name: "document.pdf".to_string(),
             size: 4096,
+            chunk_count: 1,
         });
 
         assert_eq!(app.files_panel.files.len(), 1);
@@ -469,6 +507,7 @@ mod tests {
             hash: "abc".to_string(),
             name: "test.txt".to_string(),
             size: 100,
+            chunk_count: 1,
         });
         assert_eq!(app.files_panel.files.len(), 1);
     }
@@ -509,6 +548,7 @@ mod tests {
             hash: "hash1".to_string(),
             name: "file.zip".to_string(),
             size: 999,
+            chunk_count: 1,
         });
         assert_eq!(app.files_panel.files.len(), 1);
 

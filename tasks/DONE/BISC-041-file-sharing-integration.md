@@ -42,11 +42,11 @@
 
 ## Acceptance Criteria
 
-- [ ] User can select and share a file via the file picker
-- [ ] Shared file appears in all peers' file panels
-- [ ] User can download a shared file by clicking download
-- [ ] Download progress is shown in the UI
-- [ ] Completed files are stored in the configured storage directory
-- [ ] Peer-assisted downloads work when original sender is offline but another peer has the file
-- [ ] `cargo clippy --workspace -- -D warnings` passes
-- [ ] `cargo fmt --all --check` passes
+- [x] User can select and share a file via the file picker
+- [x] Shared file appears in all peers' file panels
+- [x] User can download a shared file by clicking download
+- [x] Download progress is shown in the UI
+- [x] Completed files are stored in the configured storage directory
+- [x] Peer-assisted downloads work when original sender is offline but another peer has the file
+- [x] `cargo clippy --workspace -- -D warnings` passes
+- [x] `cargo fmt --all --check` passes

@@ -1,4 +1,5 @@
 mod app;
+mod file_sharing;
 mod screen_share;
 pub mod settings;
 mod video;
@@ -13,6 +14,7 @@ use bisc_net::{BiscEndpoint, Channel, ChannelEvent, GossipHandle};
 use bisc_protocol::channel::ChannelMessage;
 use bisc_protocol::ticket::BiscTicket;
 use bisc_protocol::types::EndpointId;
+use file_sharing::FileSharingState;
 use iced::futures::Stream;
 use iroh::protocol::Router;
 use screen_share::ScreenShareState;
@@ -77,12 +79,13 @@ fn channel_event_to_message(event: ChannelEvent) -> AppMessage {
             file_hash,
             file_name,
             file_size,
-            ..
+            chunk_count,
         } => AppMessage::FileAnnounced {
             sender_id: endpoint_id.to_hex(),
             hash: data_encoding::HEXLOWER.encode(&file_hash),
             name: file_name,
             size: file_size,
+            chunk_count,
         },
     }
 }
@@ -229,6 +232,8 @@ struct BiscApp {
     video: Arc<tokio::sync::Mutex<VideoState>>,
     /// Screen share state: capture, pipelines, frame delivery.
     screen_share: Arc<tokio::sync::Mutex<ScreenShareState>>,
+    /// File sharing state: file store, chunk serving, downloads.
+    file_sharing: Arc<tokio::sync::Mutex<FileSharingState>>,
     /// Shared peer video frame buffers (read by UI, written by video pipelines).
     peer_frames: Arc<Mutex<HashMap<String, RawFrame>>>,
     /// Shared local camera preview frame (read by UI, written by camera task).
@@ -245,6 +250,7 @@ impl Default for BiscApp {
         let local_frame = video_state.local_frame().clone();
         let screen_share_state = ScreenShareState::new();
         let share_frames = screen_share_state.share_frames().clone();
+        let file_sharing_state = FileSharingState::new(settings.storage_dir.clone());
         Self {
             app: app::App::default(),
             settings,
@@ -253,6 +259,7 @@ impl Default for BiscApp {
             voice: Arc::new(tokio::sync::Mutex::new(VoiceState::new())),
             video: Arc::new(tokio::sync::Mutex::new(video_state)),
             screen_share: Arc::new(tokio::sync::Mutex::new(screen_share_state)),
+            file_sharing: Arc::new(tokio::sync::Mutex::new(file_sharing_state)),
             peer_frames,
             local_frame,
             share_frames,
@@ -269,6 +276,14 @@ impl BiscApp {
                 let voice = Arc::clone(&self.voice);
                 tokio::spawn(async move {
                     voice.lock().await.init();
+                });
+                // Initialize file store when entering a channel
+                let file_sharing = Arc::clone(&self.file_sharing);
+                tokio::spawn(async move {
+                    let mut fs = file_sharing.lock().await;
+                    if let Err(e) = fs.init() {
+                        tracing::error!(error = %e, "failed to initialize file store");
+                    }
                 });
             }
             AppMessage::PeerConnected(hex_id) => {
@@ -293,6 +308,31 @@ impl BiscApp {
                         );
                     }
                 });
+                // Start chunk server for file sharing with this peer
+                let file_sharing = Arc::clone(&self.file_sharing);
+                let net_clone = Arc::clone(&self.net);
+                let peer_id_clone = hex_id.clone();
+                tokio::spawn(async move {
+                    let store = {
+                        let fs = file_sharing.lock().await;
+                        fs.store().cloned()
+                    };
+                    if let Some(store) = store {
+                        if let Some(eid) = EndpointId::from_hex(&peer_id_clone) {
+                            let conn = {
+                                let guard = net_clone.lock().unwrap();
+                                guard.as_ref().and_then(|n| {
+                                    n.channel
+                                        .as_ref()
+                                        .and_then(|c| c.peer_quic_connection(&eid))
+                                })
+                            };
+                            if let Some(conn) = conn {
+                                file_sharing::spawn_chunk_server(store, conn, peer_id_clone);
+                            }
+                        }
+                    }
+                });
             }
             AppMessage::PeerLeft(hex_id) => {
                 // Stop voice, video, and screen share pipelines for the departing peer
@@ -304,6 +344,41 @@ impl BiscApp {
                     voice.lock().await.remove_peer(&peer_id).await;
                     video.lock().await.remove_peer(&peer_id).await;
                     screen_share.lock().await.remove_peer(&peer_id).await;
+                });
+            }
+            AppMessage::FileAnnounced {
+                ref sender_id,
+                ref hash,
+                ref name,
+                size,
+                chunk_count,
+            } => {
+                // Register the announced file in our local store for future download
+                let file_sharing = Arc::clone(&self.file_sharing);
+                let hash_hex = hash.clone();
+                let file_name = name.clone();
+                let sender = sender_id.clone();
+                let file_size = *size;
+                let chunks = *chunk_count;
+                tokio::spawn(async move {
+                    let fs = file_sharing.lock().await;
+                    if let Some(store) = fs.store() {
+                        if let Ok(hash_bytes) = data_encoding::HEXLOWER.decode(hash_hex.as_bytes())
+                        {
+                            if hash_bytes.len() == 32 {
+                                let mut file_hash = [0u8; 32];
+                                file_hash.copy_from_slice(&hash_bytes);
+                                file_sharing::register_announced_file(
+                                    store, &file_hash, &file_name, file_size, chunks,
+                                );
+                                tracing::info!(
+                                    file_name = %file_name,
+                                    sender = %sender,
+                                    "registered announced file in store"
+                                );
+                            }
+                        }
+                    }
                 });
             }
             AppMessage::VideoFrameTick => {
@@ -354,6 +429,52 @@ impl BiscApp {
                                     frame.height,
                                     &frame.data,
                                 );
+                            }
+                        }
+                    }
+                }
+                // Poll download progress from file store
+                if let Ok(fs) = self.file_sharing.try_lock() {
+                    if let Some(store) = fs.store() {
+                        for file in &mut self.app.files_panel.files {
+                            if let bisc_ui::screens::files::FileStatus::Downloading {
+                                total_chunks,
+                                ..
+                            } = &file.status
+                            {
+                                let total = *total_chunks;
+                                if total == 0 && file.chunk_count > 0 {
+                                    // Initialize total_chunks from file metadata
+                                    file.status =
+                                        bisc_ui::screens::files::FileStatus::Downloading {
+                                            chunks_received: 0,
+                                            total_chunks: file.chunk_count,
+                                        };
+                                }
+                                if let Ok(hash_bytes) =
+                                    data_encoding::HEXLOWER.decode(file.hash.as_bytes())
+                                {
+                                    if hash_bytes.len() == 32 {
+                                        let mut fh = [0u8; 32];
+                                        fh.copy_from_slice(&hash_bytes);
+                                        if let Ok(bf) = store.get_chunk_bitfield(&fh) {
+                                            let received = (0..file.chunk_count)
+                                                .filter(|i| bf.has_chunk(*i))
+                                                .count()
+                                                as u32;
+                                            if received >= file.chunk_count && file.chunk_count > 0
+                                            {
+                                                file.status =
+                                                    bisc_ui::screens::files::FileStatus::Downloaded;
+                                            } else {
+                                                file.status = bisc_ui::screens::files::FileStatus::Downloading {
+                                                    chunks_received: received,
+                                                    total_chunks: file.chunk_count,
+                                                };
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -558,9 +679,116 @@ impl BiscApp {
                 }
                 iced::Task::none()
             }
-            other => {
-                tracing::info!(action = ?other, "action not yet wired");
-                iced::Task::none()
+            AppAction::OpenFilePicker => {
+                let file_sharing = Arc::clone(&self.file_sharing);
+                let net = Arc::clone(&self.net);
+                iced::Task::perform(
+                    async move {
+                        let path = match file_sharing::pick_file().await {
+                            Some(p) => p,
+                            None => return Ok(None),
+                        };
+
+                        let manifest = {
+                            let fs = file_sharing.lock().await;
+                            fs.share_file(&path).await?
+                        };
+
+                        let hash_hex = data_encoding::HEXLOWER.encode(&manifest.file_hash);
+
+                        // Broadcast FileAnnounce via gossip
+                        {
+                            let guard = net.lock().unwrap();
+                            if let Some(ref n) = *guard {
+                                if let Some(ref channel) = n.channel {
+                                    let msg = file_sharing::file_announce_message(
+                                        &manifest,
+                                        channel.our_endpoint_id(),
+                                    );
+                                    channel.broadcast_message(msg);
+                                }
+                            }
+                        }
+
+                        Ok::<_, anyhow::Error>(Some((
+                            hash_hex,
+                            manifest.file_name,
+                            manifest.file_size,
+                        )))
+                    },
+                    |result| match result {
+                        Ok(Some((hash, name, size))) => AppMessage::FileShared { hash, name, size },
+                        Ok(None) => AppMessage::FileShareCancelled,
+                        Err(e) => AppMessage::FileShareFailed(e.to_string()),
+                    },
+                )
+            }
+            AppAction::DownloadFile(hash_hex) => {
+                // Gather peers that have this file
+                let peers_with_file: Vec<String> = self
+                    .app
+                    .files_panel
+                    .files
+                    .iter()
+                    .find(|f| f.hash == hash_hex)
+                    .map(|f| {
+                        let mut peers = f.available_from.clone();
+                        if !f.sender.is_empty() && !peers.contains(&f.sender) {
+                            peers.push(f.sender.clone());
+                        }
+                        peers
+                    })
+                    .unwrap_or_default();
+
+                let file_sharing = Arc::clone(&self.file_sharing);
+                let net = Arc::clone(&self.net);
+                let hash_for_result = hash_hex.clone();
+
+                iced::Task::perform(
+                    async move {
+                        let hash_bytes = data_encoding::HEXLOWER
+                            .decode(hash_hex.as_bytes())
+                            .map_err(|e| anyhow::anyhow!("invalid hash: {e}"))?;
+                        anyhow::ensure!(hash_bytes.len() == 32, "invalid hash length");
+                        let mut file_hash = [0u8; 32];
+                        file_hash.copy_from_slice(&hash_bytes);
+
+                        let store = {
+                            let fs = file_sharing.lock().await;
+                            fs.store()
+                                .cloned()
+                                .ok_or_else(|| anyhow::anyhow!("file store not initialized"))?
+                        };
+
+                        // Get QUIC connections to peers
+                        let mut connections = Vec::new();
+                        {
+                            let guard = net.lock().unwrap();
+                            if let Some(ref n) = *guard {
+                                if let Some(ref channel) = n.channel {
+                                    for peer_hex in &peers_with_file {
+                                        if let Some(eid) = EndpointId::from_hex(peer_hex) {
+                                            if let Some(conn) = channel.peer_quic_connection(&eid) {
+                                                connections.push(conn);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        file_sharing::download_file(store, file_hash, connections).await?;
+
+                        Ok::<_, anyhow::Error>(hash_hex)
+                    },
+                    move |result| match result {
+                        Ok(hash) => AppMessage::FileDownloadComplete(hash),
+                        Err(e) => AppMessage::FileDownloadFailed {
+                            hash: hash_for_result,
+                            error: e.to_string(),
+                        },
+                    },
+                )
             }
         }
     }
@@ -738,11 +966,13 @@ mod tests {
                 hash: h,
                 name,
                 size,
+                chunk_count,
             } => {
                 assert_eq!(sender_id, id.to_hex());
                 assert_eq!(h, data_encoding::HEXLOWER.encode(&hash));
                 assert_eq!(name, "photo.jpg");
                 assert_eq!(size, 1024);
+                assert_eq!(chunk_count, 4);
             }
             other => panic!("expected FileAnnounced, got {:?}", other),
         }
