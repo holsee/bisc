@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 
 use app::{AppAction, AppMessage, Screen};
 use bisc_media::video_types::RawFrame;
-use bisc_net::{BiscEndpoint, Channel, ChannelEvent, GossipHandle};
+use bisc_net::{BiscEndpoint, Channel, ChannelEvent, GossipHandle, MediaProtocol};
 use bisc_protocol::channel::ChannelMessage;
 use bisc_protocol::ticket::BiscTicket;
 use bisc_protocol::types::EndpointId;
@@ -41,6 +41,7 @@ struct Net {
     gossip: GossipHandle,
     _router: Router,
     channel: Option<Channel>,
+    incoming_rx: Option<mpsc::UnboundedReceiver<iroh::endpoint::Connection>>,
 }
 
 /// Initialize the networking layer if not yet created.
@@ -48,12 +49,14 @@ async fn ensure_net_initialized(net: &Arc<Mutex<Option<Net>>>) -> anyhow::Result
     let needs_init = net.lock().unwrap().is_none();
     if needs_init {
         let ep = BiscEndpoint::new().await?;
-        let (gossip, router) = GossipHandle::new(ep.endpoint());
+        let (media_protocol, incoming_rx) = MediaProtocol::new();
+        let (gossip, router) = GossipHandle::with_protocols(ep.endpoint(), media_protocol);
         *net.lock().unwrap() = Some(Net {
             endpoint: ep,
             gossip,
             _router: router,
             channel: None,
+            incoming_rx: Some(incoming_rx),
         });
     }
     Ok(())
@@ -525,13 +528,17 @@ impl BiscApp {
                 iced::Task::perform(
                     async move {
                         ensure_net_initialized(&net).await?;
-                        let (endpoint, gossip) = {
-                            let guard = net.lock().unwrap();
-                            let n = guard.as_ref().unwrap();
-                            (n.endpoint.endpoint().clone(), n.gossip.clone())
+                        let (endpoint, gossip, incoming_rx) = {
+                            let mut guard = net.lock().unwrap();
+                            let n = guard.as_mut().unwrap();
+                            (
+                                n.endpoint.endpoint().clone(),
+                                n.gossip.clone(),
+                                n.incoming_rx.take(),
+                            )
                         };
                         let (mut channel, ticket) =
-                            Channel::create(&endpoint, &gossip, display_name, None).await?;
+                            Channel::create(&endpoint, &gossip, display_name, incoming_rx).await?;
                         let ticket_str = ticket.to_string();
                         // Extract event receiver before storing channel
                         let rx = channel.take_event_receiver();
@@ -555,14 +562,23 @@ impl BiscApp {
                     async move {
                         ensure_net_initialized(&net).await?;
                         let bisc_ticket: BiscTicket = ticket.parse()?;
-                        let (endpoint, gossip) = {
-                            let guard = net.lock().unwrap();
-                            let n = guard.as_ref().unwrap();
-                            (n.endpoint.endpoint().clone(), n.gossip.clone())
+                        let (endpoint, gossip, incoming_rx) = {
+                            let mut guard = net.lock().unwrap();
+                            let n = guard.as_mut().unwrap();
+                            (
+                                n.endpoint.endpoint().clone(),
+                                n.gossip.clone(),
+                                n.incoming_rx.take(),
+                            )
                         };
-                        let mut channel =
-                            Channel::join(&endpoint, &gossip, &bisc_ticket, display_name, None)
-                                .await?;
+                        let mut channel = Channel::join(
+                            &endpoint,
+                            &gossip,
+                            &bisc_ticket,
+                            display_name,
+                            incoming_rx,
+                        )
+                        .await?;
                         // Extract event receiver before storing channel
                         let rx = channel.take_event_receiver();
                         *event_rx_slot.lock().unwrap() = rx;
@@ -754,8 +770,10 @@ impl BiscApp {
                 });
                 // Drop the event receiver (ends the subscription)
                 *self.channel_event_rx.lock().unwrap() = None;
-                if let Some(ref mut n) = *self.net.lock().unwrap() {
-                    if let Some(channel) = n.channel.take() {
+                // Tear down Net entirely so the next create/join gets a fresh
+                // endpoint, router, and MediaProtocol with a new incoming_rx.
+                if let Some(n) = self.net.lock().unwrap().take() {
+                    if let Some(channel) = n.channel {
                         channel.leave();
                     }
                 }

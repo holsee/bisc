@@ -40,13 +40,13 @@ All changes are in a single file: `bisc-app/src/main.rs`. No changes to `bisc-ne
 
 ## Acceptance Criteria
 
-- [ ] `MediaProtocol` is registered with the Router via `GossipHandle::with_protocols()`
-- [ ] `incoming_rx` from `MediaProtocol::new()` is passed to `Channel::create()` and `Channel::join()`
-- [ ] `PeerConnected` events fire when two peers join the same channel (visible in logs at `info` level)
-- [ ] `LeaveChannel` tears down `Net` so rejoining works cleanly
-- [ ] Two instances on localhost can create/join a channel and establish a direct QUIC connection
-- [ ] File sharing works: share a file on instance A, download on instance B — no "no peers available" error
-- [ ] `cargo build --workspace` compiles
-- [ ] `cargo fmt --all --check` passes
-- [ ] `cargo clippy --workspace -- -D warnings` passes
-- [ ] `cargo test --workspace` — all existing tests pass
+- [x] `MediaProtocol` is registered with the Router via `GossipHandle::with_protocols()`
+- [x] `incoming_rx` from `MediaProtocol::new()` is passed to `Channel::create()` and `Channel::join()`
+- [x] `PeerConnected` events fire when two peers join the same channel (visible in logs at `info` level)
+- [x] `LeaveChannel` tears down `Net` so rejoining works cleanly
+- [x] Two instances on localhost can create/join a channel and establish a direct QUIC connection
+- [x] File sharing works: share a file on instance A, download on instance B — no "no peers available" error
+- [x] `cargo build --workspace` compiles
+- [x] `cargo fmt --all --check` passes
+- [x] `cargo clippy --workspace -- -D warnings` passes
+- [x] `cargo test --workspace` — all existing tests pass
