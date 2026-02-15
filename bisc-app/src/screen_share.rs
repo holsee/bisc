@@ -242,33 +242,28 @@ fn start_screen_capture(_capture_tx: &mpsc::UnboundedSender<RawFrame>) -> bool {
     }
 
     // Auto-select primary (first) display
-    let display = &displays[0];
+    let primary_display = &displays[0];
     tracing::info!(
-        display_name = %display.name,
-        display_id = display.id,
-        width = display.width,
-        height = display.height,
+        display_name = %primary_display.name,
+        display_id = primary_display.id,
         "starting screen capture on primary display"
     );
 
-    match screen_capture::capture_display(display.id, 15) {
+    match screen_capture::capture_display(primary_display.id, 15) {
         Ok(mut stream) => {
             let tx = _capture_tx.clone();
             tokio::spawn(async move {
                 loop {
                     match stream.next_frame().await {
-                        Ok(Some(frame)) => {
+                        Some(frame) => {
                             if tx.send(frame).is_err() {
                                 tracing::debug!("screen capture output channel closed");
                                 break;
                             }
                         }
-                        Ok(None) => {
+                        None => {
                             tracing::info!("screen capture stream ended");
                             break;
-                        }
-                        Err(e) => {
-                            tracing::warn!(error = %e, "screen capture frame failed");
                         }
                     }
                 }

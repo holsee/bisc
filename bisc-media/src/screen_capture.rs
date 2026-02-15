@@ -49,22 +49,16 @@ pub fn request_permission() -> bool {
 
 /// List available displays for capture.
 pub fn list_displays() -> Vec<DisplayInfo> {
-    let targets = match scap::get_all_targets() {
-        Ok(targets) => targets,
-        Err(e) => {
-            tracing::warn!(error = %e, "failed to enumerate capture targets");
-            return Vec::new();
-        }
-    };
+    let targets = scap::get_all_targets();
 
     targets
         .into_iter()
         .filter_map(|t| match t {
             scap::Target::Display(d) => Some(DisplayInfo {
-                name: d.title,
+                name: d.title.clone(),
                 id: d.id,
-                width: d.width as u32,
-                height: d.height as u32,
+                width: 0,
+                height: 0,
             }),
             _ => None,
         })
@@ -73,20 +67,14 @@ pub fn list_displays() -> Vec<DisplayInfo> {
 
 /// List available windows for capture.
 pub fn list_windows() -> Vec<WindowInfo> {
-    let targets = match scap::get_all_targets() {
-        Ok(targets) => targets,
-        Err(e) => {
-            tracing::warn!(error = %e, "failed to enumerate capture targets");
-            return Vec::new();
-        }
-    };
+    let targets = scap::get_all_targets();
 
     targets
         .into_iter()
         .filter_map(|t| match t {
             scap::Target::Window(w) => Some(WindowInfo {
-                title: w.title,
-                app_name: w.app_name,
+                title: w.title.clone(),
+                app_name: String::new(),
                 id: w.id,
             }),
             _ => None,
@@ -96,48 +84,68 @@ pub fn list_windows() -> Vec<WindowInfo> {
 
 /// Convert a scap Frame to a RawFrame.
 fn frame_to_raw(frame: scap::frame::Frame) -> Option<RawFrame> {
+    use scap::frame::VideoFrame;
+
     match frame {
-        scap::frame::Frame::BGRA(f) => {
-            // Convert BGRA to RGBA by swapping R and B channels
-            let width = f.width as u32;
-            let height = f.height as u32;
-            let mut rgba = f.data;
-            for chunk in rgba.chunks_exact_mut(4) {
-                chunk.swap(0, 2); // swap B and R
+        scap::frame::Frame::Video(video_frame) => match video_frame {
+            VideoFrame::BGRA(f) => {
+                let width = f.width as u32;
+                let height = f.height as u32;
+                let mut rgba = f.data;
+                for chunk in rgba.chunks_exact_mut(4) {
+                    chunk.swap(0, 2); // swap B and R
+                }
+                Some(RawFrame {
+                    data: rgba,
+                    width,
+                    height,
+                    format: PixelFormat::Rgba,
+                })
             }
-            Some(RawFrame {
-                data: rgba,
-                width,
-                height,
-                format: PixelFormat::Rgba,
-            })
-        }
-        scap::frame::Frame::RGBA(f) => Some(RawFrame {
-            data: f.data,
-            width: f.width as u32,
-            height: f.height as u32,
-            format: PixelFormat::Rgba,
-        }),
-        scap::frame::Frame::RGB(f) => {
-            // Convert RGB to RGBA
-            let width = f.width as u32;
-            let height = f.height as u32;
-            let mut rgba = Vec::with_capacity(f.data.len() / 3 * 4);
-            for chunk in f.data.chunks_exact(3) {
-                rgba.push(chunk[0]);
-                rgba.push(chunk[1]);
-                rgba.push(chunk[2]);
-                rgba.push(255);
+            VideoFrame::RGB(f) => {
+                let width = f.width as u32;
+                let height = f.height as u32;
+                let mut rgba = Vec::with_capacity(f.data.len() / 3 * 4);
+                for chunk in f.data.chunks_exact(3) {
+                    rgba.push(chunk[0]);
+                    rgba.push(chunk[1]);
+                    rgba.push(chunk[2]);
+                    rgba.push(255);
+                }
+                Some(RawFrame {
+                    data: rgba,
+                    width,
+                    height,
+                    format: PixelFormat::Rgba,
+                })
             }
-            Some(RawFrame {
-                data: rgba,
-                width,
-                height,
-                format: PixelFormat::Rgba,
-            })
-        }
+            VideoFrame::RGBx(f) => {
+                let width = f.width as u32;
+                let height = f.height as u32;
+                Some(RawFrame {
+                    data: f.data,
+                    width,
+                    height,
+                    format: PixelFormat::Rgba,
+                })
+            }
+            VideoFrame::BGRx(f) => {
+                let width = f.width as u32;
+                let height = f.height as u32;
+                Some(RawFrame {
+                    data: f.data,
+                    width,
+                    height,
+                    format: PixelFormat::Rgba,
+                })
+            }
+            _ => {
+                tracing::warn!("unsupported video frame format from screen capture");
+                None
+            }
+        },
         _ => {
-            tracing::warn!("unsupported frame format from screen capture");
+            tracing::warn!("unsupported frame type from screen capture");
             None
         }
     }
@@ -174,7 +182,7 @@ impl Drop for ScreenCaptureStream {
 ///
 /// Returns a `ScreenCaptureStream` that yields `RawFrame`s.
 pub fn capture_display(display_id: u32, fps: u32) -> Result<ScreenCaptureStream> {
-    let targets = scap::get_all_targets().context("failed to enumerate targets")?;
+    let targets = scap::get_all_targets();
 
     let target = targets
         .into_iter()
@@ -188,7 +196,7 @@ pub fn capture_display(display_id: u32, fps: u32) -> Result<ScreenCaptureStream>
 ///
 /// Returns a `ScreenCaptureStream` that yields `RawFrame`s.
 pub fn capture_window(window_id: u32, fps: u32) -> Result<ScreenCaptureStream> {
-    let targets = scap::get_all_targets().context("failed to enumerate targets")?;
+    let targets = scap::get_all_targets();
 
     let target = targets
         .into_iter()
@@ -220,7 +228,7 @@ fn start_capture(target: Option<scap::Target>, fps: u32) -> Result<ScreenCapture
         scap::capturer::Capturer::build(options).context("failed to build capturer")?;
 
     let (frame_tx, frame_rx) = mpsc::unbounded_channel();
-    let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
+    let (stop_tx, mut stop_rx) = tokio::sync::oneshot::channel::<()>();
 
     // Spawn a blocking thread for the capture loop since scap is synchronous
     std::thread::spawn(move || {

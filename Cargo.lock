@@ -5926,8 +5926,6 @@ dependencies = [
 [[package]]
 name = "scap"
 version = "0.1.0-beta.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "36b5187a2336cbb98d29647050d336ce16bf4806da8fcf04934a4c8788bc17bc"
 dependencies = [
  "cidre",
  "cocoa 0.25.0",

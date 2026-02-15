@@ -120,6 +120,8 @@ async fn video_pipeline_end_to_end() {
         height,
         framerate: 15,
         bitrate_bps: 100_000,
+        max_bitrate_bps: 500_000,
+        min_bitrate_bps: 50_000,
     };
 
     // --- Setup: establish channel and connection ---

@@ -293,17 +293,17 @@ fn start_camera_capture(
 ) -> bool {
     use bisc_media::camera::{Camera, CameraConfig};
 
-    let config = CameraConfig::default();
-    match Camera::open(0, &config) {
-        Ok(camera) => {
-            let local_frame = Arc::clone(local_frame);
-            tracing::info!("camera opened successfully");
+    let local_frame = Arc::clone(local_frame);
 
-            // Spawn a camera capture task
-            tokio::spawn(async move {
-                let mut interval = tokio::time::interval(std::time::Duration::from_millis(33)); // ~30fps
+    // Camera types (nokhwa) are not Send, so open and use on a dedicated thread
+    let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let config = CameraConfig::default();
+        match Camera::open(0, config) {
+            Ok(mut camera) => {
+                tracing::info!("camera opened successfully");
+                let _ = ready_tx.send(true);
                 loop {
-                    interval.tick().await;
                     match camera.capture_frame() {
                         Ok(frame) => {
                             *local_frame.lock().unwrap() = Some(frame);
@@ -312,16 +312,18 @@ fn start_camera_capture(
                             tracing::warn!(error = %e, "camera frame capture failed");
                         }
                     }
+                    std::thread::sleep(std::time::Duration::from_millis(33)); // ~30fps
                 }
-            });
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "failed to open camera");
+                let _ = ready_tx.send(false);
+            }
+        }
+    });
 
-            true
-        }
-        Err(e) => {
-            tracing::warn!(error = %e, "failed to open camera");
-            false
-        }
-    }
+    // Wait for camera open result
+    ready_rx.recv().unwrap_or(false)
 }
 
 /// Stub when the `video` feature is not enabled.

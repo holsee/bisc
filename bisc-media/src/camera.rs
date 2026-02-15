@@ -148,6 +148,9 @@ impl Camera {
                     format: PixelFormat::Nv12,
                 })
             }
+            PixelFormat::I420 => {
+                anyhow::bail!("I420 pixel format is not supported for direct camera capture");
+            }
         }
     }
 

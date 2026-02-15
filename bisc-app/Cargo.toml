@@ -5,7 +5,7 @@ version.workspace = true
 license.workspace = true
 
 [features]
-default = []
+default = ["audio", "video", "video-codec", "screen-capture"]
 audio = ["bisc-media/audio"]
 video = ["bisc-media/video"]
 video-codec = ["bisc-media/video-codec"]

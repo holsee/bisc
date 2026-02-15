@@ -53,6 +53,10 @@ bisc-media = { path = "bisc-media" }
 bisc-files = { path = "bisc-files" }
 bisc-ui = { path = "bisc-ui" }
 
+[patch.crates-io]
+# Fix scap Linux compilation: Frame enum paths and display_time types
+scap = { path = "vendor/scap" }
+
 [profile.release]
 strip = true
 lto = "thin"
