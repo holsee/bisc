@@ -6,9 +6,6 @@ use iroh::{Endpoint, EndpointId, RelayMode};
 /// ALPN protocol identifier for bisc media connections.
 pub const MEDIA_ALPN: &[u8] = b"bisc/media/0";
 
-/// ALPN protocol identifier for bisc file transfer connections.
-pub const FILES_ALPN: &[u8] = b"bisc/files/0";
-
 /// Wrapper around an iroh `Endpoint` configured for bisc.
 #[derive(Debug, Clone)]
 pub struct BiscEndpoint {
@@ -19,7 +16,7 @@ impl BiscEndpoint {
     /// Create a new endpoint with bisc ALPN protocols and default relay configuration.
     pub async fn new() -> Result<Self> {
         let endpoint = Endpoint::builder()
-            .alpns(vec![MEDIA_ALPN.to_vec(), FILES_ALPN.to_vec()])
+            .alpns(vec![MEDIA_ALPN.to_vec(), iroh_blobs::ALPN.to_vec()])
             .bind()
             .await?;
 
@@ -34,7 +31,7 @@ impl BiscEndpoint {
     /// localhost addresses — zero external network dependency.
     pub async fn for_testing() -> Result<Self> {
         let endpoint = Endpoint::empty_builder(RelayMode::Disabled)
-            .alpns(vec![MEDIA_ALPN.to_vec(), FILES_ALPN.to_vec()])
+            .alpns(vec![MEDIA_ALPN.to_vec(), iroh_blobs::ALPN.to_vec()])
             .bind()
             .await?;
 

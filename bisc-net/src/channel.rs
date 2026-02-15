@@ -53,7 +53,6 @@ pub enum ChannelEvent {
         file_hash: [u8; 32],
         file_name: String,
         file_size: u64,
-        chunk_count: u32,
     },
 }
 
@@ -586,7 +585,6 @@ impl Channel {
                     file_hash,
                     file_name,
                     file_size,
-                    chunk_count,
                 } => {
                     if endpoint_id == our_id {
                         return;
@@ -596,7 +594,6 @@ impl Channel {
                         file_hash,
                         file_name,
                         file_size,
-                        chunk_count,
                     });
                 }
                 ChannelMessage::TicketRefresh { .. } => {

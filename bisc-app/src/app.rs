@@ -61,7 +61,6 @@ pub enum AppMessage {
         hash: String,
         name: String,
         size: u64,
-        chunk_count: u32,
     },
     /// A file was successfully shared (local user).
     FileShared {
@@ -285,16 +284,14 @@ impl App {
                 hash,
                 name,
                 size,
-                chunk_count,
             } => {
-                self.files_panel
-                    .file_announced(hash, name, size, sender_id, chunk_count);
+                self.files_panel.file_announced(hash, name, size, sender_id);
                 AppAction::None
             }
             AppMessage::FileShared { hash, name, size } => {
                 // Add to our files panel as already downloaded (we have it)
                 self.files_panel
-                    .file_announced(hash.clone(), name, size, "You".to_string(), 0);
+                    .file_announced(hash.clone(), name, size, "You".to_string());
                 self.files_panel.file_completed(&hash);
                 AppAction::None
             }
@@ -487,7 +484,6 @@ mod tests {
             hash: "abc123".to_string(),
             name: "document.pdf".to_string(),
             size: 4096,
-            chunk_count: 1,
         });
 
         assert_eq!(app.files_panel.files.len(), 1);
@@ -521,7 +517,6 @@ mod tests {
             hash: "abc".to_string(),
             name: "test.txt".to_string(),
             size: 100,
-            chunk_count: 1,
         });
         assert_eq!(app.files_panel.files.len(), 1);
     }
@@ -563,7 +558,6 @@ mod tests {
             hash: "hash1".to_string(),
             name: "file.zip".to_string(),
             size: 999,
-            chunk_count: 1,
         });
         assert_eq!(app.files_panel.files.len(), 1);
 

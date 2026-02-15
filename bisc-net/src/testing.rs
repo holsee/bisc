@@ -141,6 +141,25 @@ pub async fn setup_peer_with_media() -> (
     (ep, gossip, router, incoming_rx)
 }
 
+/// Create an endpoint + gossip pair with media and blobs protocols (relay disabled).
+pub async fn setup_peer_with_all_protocols(
+    blob_store: &iroh_blobs::store::mem::MemStore,
+) -> (
+    BiscEndpoint,
+    GossipHandle,
+    iroh::protocol::Router,
+    mpsc::UnboundedReceiver<iroh::endpoint::Connection>,
+) {
+    let ep = BiscEndpoint::for_testing()
+        .await
+        .expect("test endpoint creation failed");
+    let (media_proto, incoming_rx) = MediaProtocol::new();
+    let blobs_protocol = iroh_blobs::BlobsProtocol::new(blob_store, None);
+    let (gossip, router) =
+        GossipHandle::with_all_protocols(ep.endpoint(), media_proto, blobs_protocol);
+    (ep, gossip, router, incoming_rx)
+}
+
 /// Wait for a channel to see at least `expected_count` peers.
 ///
 /// Panics if the timeout is reached.

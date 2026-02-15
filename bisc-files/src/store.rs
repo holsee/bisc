@@ -1,17 +1,15 @@
-//! File storage: manages the local storage directory and SQLite metadata database.
-//!
-//! Each file is stored at `<storage_dir>/bisc/<hex_hash>/<filename>`.
-//! SQLite tracks file metadata (manifests) and chunk download progress.
+//! File metadata store: thin SQLite layer tracking file names, sizes, and
+//! BLAKE3 hashes for UI display. Actual file data is stored and transferred
+//! by iroh-blobs.
 
 use std::path::PathBuf;
 use std::sync::Mutex;
 
 use anyhow::{Context, Result};
-use bisc_protocol::file::{ChunkBitfield, FileManifest};
-use bisc_protocol::types::EndpointId;
+use bisc_protocol::file::FileManifest;
 use rusqlite::Connection;
 
-/// Manages local file storage and SQLite metadata.
+/// Manages file metadata in SQLite.
 ///
 /// Thread-safe: the inner SQLite connection is protected by a `Mutex`.
 pub struct FileStore {
@@ -40,16 +38,7 @@ impl FileStore {
                 hash BLOB PRIMARY KEY,
                 name TEXT NOT NULL,
                 size INTEGER NOT NULL,
-                chunk_size INTEGER NOT NULL,
-                chunk_count INTEGER NOT NULL,
                 complete INTEGER NOT NULL DEFAULT 0
-            );
-            CREATE TABLE IF NOT EXISTS chunks (
-                file_hash BLOB NOT NULL,
-                chunk_index INTEGER NOT NULL,
-                received INTEGER NOT NULL DEFAULT 1,
-                PRIMARY KEY (file_hash, chunk_index),
-                FOREIGN KEY (file_hash) REFERENCES files(hash)
             );",
         )
         .context("failed to initialize database schema")?;
@@ -62,32 +51,25 @@ impl FileStore {
         })
     }
 
-    /// Add a file manifest to the store. Returns the file hash.
+    /// Add a file manifest to the metadata store.
     pub fn add_file(&self, manifest: &FileManifest) -> Result<[u8; 32]> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT OR REPLACE INTO files (hash, name, size, chunk_size, chunk_count, complete)
-                 VALUES (?1, ?2, ?3, ?4, ?5, 0)",
+            "INSERT OR REPLACE INTO files (hash, name, size, complete)
+                 VALUES (?1, ?2, ?3, 0)",
             rusqlite::params![
                 manifest.file_hash.as_slice(),
                 manifest.file_name,
                 manifest.file_size as i64,
-                manifest.chunk_size as i64,
-                manifest.chunk_count as i64,
             ],
         )
         .context("failed to insert file")?;
-
-        let file_dir = self.file_dir(&manifest.file_hash);
-        std::fs::create_dir_all(&file_dir)
-            .with_context(|| format!("failed to create file directory: {}", file_dir.display()))?;
 
         tracing::info!(
             file_hash = data_encoding::HEXLOWER.encode(&manifest.file_hash),
             file_name = %manifest.file_name,
             file_size = manifest.file_size,
-            chunk_count = manifest.chunk_count,
-            "file added to store"
+            "file added to metadata store"
         );
 
         Ok(manifest.file_hash)
@@ -97,7 +79,7 @@ impl FileStore {
     pub fn get_file(&self, file_hash: &[u8; 32]) -> Result<Option<FileManifest>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
-            .prepare("SELECT hash, name, size, chunk_size, chunk_count FROM files WHERE hash = ?1")
+            .prepare("SELECT hash, name, size FROM files WHERE hash = ?1")
             .context("failed to prepare query")?;
 
         let result = stmt.query_row(rusqlite::params![file_hash.as_slice()], |row| {
@@ -108,8 +90,6 @@ impl FileStore {
                 file_hash: hash,
                 file_name: row.get(1)?,
                 file_size: row.get::<_, i64>(2)? as u64,
-                chunk_size: row.get::<_, i64>(3)? as u32,
-                chunk_count: row.get::<_, i64>(4)? as u32,
             })
         });
 
@@ -120,92 +100,23 @@ impl FileStore {
         }
     }
 
-    /// Mark a chunk as received.
-    pub fn set_chunk_received(&self, file_hash: &[u8; 32], chunk_index: u32) -> Result<()> {
+    /// Mark a file as completely downloaded.
+    pub fn set_complete(&self, file_hash: &[u8; 32]) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT OR IGNORE INTO chunks (file_hash, chunk_index, received)
-                 VALUES (?1, ?2, 1)",
-            rusqlite::params![file_hash.as_slice(), chunk_index as i64],
+            "UPDATE files SET complete = 1 WHERE hash = ?1",
+            rusqlite::params![file_hash.as_slice()],
         )
-        .context("failed to mark chunk received")?;
+        .context("failed to mark file complete")?;
 
-        // Check if file is now complete and update the flag.
-        let chunk_count: i64 = conn
-            .query_row(
-                "SELECT chunk_count FROM files WHERE hash = ?1",
-                rusqlite::params![file_hash.as_slice()],
-                |row| row.get(0),
-            )
-            .context("failed to query chunk count")?;
-
-        let received_count: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM chunks WHERE file_hash = ?1 AND received = 1",
-                rusqlite::params![file_hash.as_slice()],
-                |row| row.get(0),
-            )
-            .context("failed to count received chunks")?;
-
-        if received_count >= chunk_count {
-            conn.execute(
-                "UPDATE files SET complete = 1 WHERE hash = ?1",
-                rusqlite::params![file_hash.as_slice()],
-            )
-            .context("failed to update file completeness")?;
-
-            tracing::info!(
-                file_hash = data_encoding::HEXLOWER.encode(file_hash),
-                "file download complete"
-            );
-        }
-
-        tracing::debug!(
+        tracing::info!(
             file_hash = data_encoding::HEXLOWER.encode(file_hash),
-            chunk_index,
-            received = received_count,
-            total = chunk_count,
-            "chunk received"
+            "file marked complete"
         );
-
         Ok(())
     }
 
-    /// Get the chunk bitfield for a file.
-    ///
-    /// The returned bitfield uses a zero `EndpointId`; callers should set the
-    /// peer ID if needed for protocol exchange.
-    pub fn get_chunk_bitfield(&self, file_hash: &[u8; 32]) -> Result<ChunkBitfield> {
-        let conn = self.conn.lock().unwrap();
-        let chunk_count: i64 = conn
-            .query_row(
-                "SELECT chunk_count FROM files WHERE hash = ?1",
-                rusqlite::params![file_hash.as_slice()],
-                |row| row.get(0),
-            )
-            .context("failed to query chunk count")?;
-
-        let mut bitfield = ChunkBitfield::new(*file_hash, EndpointId([0; 32]), chunk_count as u32);
-
-        let mut stmt = conn
-            .prepare("SELECT chunk_index FROM chunks WHERE file_hash = ?1 AND received = 1")
-            .context("failed to prepare bitfield query")?;
-
-        let indices = stmt
-            .query_map(rusqlite::params![file_hash.as_slice()], |row| {
-                row.get::<_, i64>(0)
-            })
-            .context("failed to query chunks")?;
-
-        for index in indices {
-            let idx = index.context("failed to read chunk index")?;
-            bitfield.set_chunk(idx as u32);
-        }
-
-        Ok(bitfield)
-    }
-
-    /// Check if all chunks for a file have been received.
+    /// Check if a file has been fully downloaded.
     pub fn is_complete(&self, file_hash: &[u8; 32]) -> Result<bool> {
         let conn = self.conn.lock().unwrap();
         let complete: i64 = conn
@@ -223,7 +134,7 @@ impl FileStore {
     pub fn list_files(&self) -> Result<Vec<FileManifest>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
-            .prepare("SELECT hash, name, size, chunk_size, chunk_count FROM files")
+            .prepare("SELECT hash, name, size FROM files")
             .context("failed to prepare list query")?;
 
         let files = stmt
@@ -235,8 +146,6 @@ impl FileStore {
                     file_hash: hash,
                     file_name: row.get(1)?,
                     file_size: row.get::<_, i64>(2)? as u64,
-                    chunk_size: row.get::<_, i64>(3)? as u32,
-                    chunk_count: row.get::<_, i64>(4)? as u32,
                 })
             })
             .context("failed to query files")?;
@@ -249,18 +158,9 @@ impl FileStore {
         Ok(result)
     }
 
-    /// Get the storage path for a file.
-    ///
-    /// Returns `<storage_dir>/bisc/<hex_hash>/<filename>`.
-    pub fn file_path(&self, file_hash: &[u8; 32]) -> Result<PathBuf> {
-        let manifest = self.get_file(file_hash)?.context("file not found")?;
-        Ok(self.file_dir(file_hash).join(&manifest.file_name))
-    }
-
-    /// Get the directory for a file's data.
-    fn file_dir(&self, file_hash: &[u8; 32]) -> PathBuf {
-        let hex = data_encoding::HEXLOWER.encode(file_hash);
-        self.storage_dir.join("bisc").join(hex)
+    /// Get the storage directory root.
+    pub fn storage_dir(&self) -> &PathBuf {
+        &self.storage_dir
     }
 }
 
@@ -269,13 +169,11 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
-    fn test_manifest(hash_byte: u8, chunk_count: u32) -> FileManifest {
+    fn test_manifest(hash_byte: u8) -> FileManifest {
         FileManifest {
             file_hash: [hash_byte; 32],
             file_name: format!("test_{hash_byte:02x}.dat"),
-            file_size: chunk_count as u64 * 262_144,
-            chunk_size: 262_144,
-            chunk_count,
+            file_size: 1_000_000,
         }
     }
 
@@ -294,7 +192,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let store = FileStore::new(tmp.path().to_path_buf()).unwrap();
 
-        let manifest = test_manifest(0xAA, 8);
+        let manifest = test_manifest(0xAA);
         store.add_file(&manifest).unwrap();
 
         let retrieved = store.get_file(&manifest.file_hash).unwrap();
@@ -311,52 +209,15 @@ mod tests {
     }
 
     #[test]
-    fn chunk_tracking_and_bitfield() {
+    fn set_complete_marks_file() {
         let tmp = TempDir::new().unwrap();
         let store = FileStore::new(tmp.path().to_path_buf()).unwrap();
 
-        let manifest = test_manifest(0xBB, 10);
-        store.add_file(&manifest).unwrap();
-
-        // No chunks received initially
-        let bf = store.get_chunk_bitfield(&manifest.file_hash).unwrap();
-        for i in 0..10 {
-            assert!(!bf.has_chunk(i), "chunk {i} should not be set");
-        }
-
-        // Receive some chunks
-        store.set_chunk_received(&manifest.file_hash, 0).unwrap();
-        store.set_chunk_received(&manifest.file_hash, 3).unwrap();
-        store.set_chunk_received(&manifest.file_hash, 9).unwrap();
-
-        let bf = store.get_chunk_bitfield(&manifest.file_hash).unwrap();
-        assert!(bf.has_chunk(0));
-        assert!(!bf.has_chunk(1));
-        assert!(!bf.has_chunk(2));
-        assert!(bf.has_chunk(3));
-        assert!(bf.has_chunk(9));
-
-        // Idempotent: setting same chunk again should not error
-        store.set_chunk_received(&manifest.file_hash, 0).unwrap();
-    }
-
-    #[test]
-    fn is_complete_only_when_all_chunks_received() {
-        let tmp = TempDir::new().unwrap();
-        let store = FileStore::new(tmp.path().to_path_buf()).unwrap();
-
-        let manifest = test_manifest(0xCC, 3);
+        let manifest = test_manifest(0xBB);
         store.add_file(&manifest).unwrap();
 
         assert!(!store.is_complete(&manifest.file_hash).unwrap());
-
-        store.set_chunk_received(&manifest.file_hash, 0).unwrap();
-        assert!(!store.is_complete(&manifest.file_hash).unwrap());
-
-        store.set_chunk_received(&manifest.file_hash, 1).unwrap();
-        assert!(!store.is_complete(&manifest.file_hash).unwrap());
-
-        store.set_chunk_received(&manifest.file_hash, 2).unwrap();
+        store.set_complete(&manifest.file_hash).unwrap();
         assert!(store.is_complete(&manifest.file_hash).unwrap());
     }
 
@@ -365,9 +226,9 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let store = FileStore::new(tmp.path().to_path_buf()).unwrap();
 
-        let m1 = test_manifest(0x01, 4);
-        let m2 = test_manifest(0x02, 8);
-        let m3 = test_manifest(0x03, 16);
+        let m1 = test_manifest(0x01);
+        let m2 = test_manifest(0x02);
+        let m3 = test_manifest(0x03);
 
         store.add_file(&m1).unwrap();
         store.add_file(&m2).unwrap();
@@ -384,42 +245,19 @@ mod tests {
     fn database_persists_across_instances() {
         let tmp = TempDir::new().unwrap();
         let store_dir = tmp.path().to_path_buf();
-        let manifest = test_manifest(0xDD, 5);
+        let manifest = test_manifest(0xDD);
 
-        // First instance: add file and some chunks
         {
             let store = FileStore::new(store_dir.clone()).unwrap();
             store.add_file(&manifest).unwrap();
-            store.set_chunk_received(&manifest.file_hash, 0).unwrap();
-            store.set_chunk_received(&manifest.file_hash, 2).unwrap();
+            store.set_complete(&manifest.file_hash).unwrap();
         }
 
-        // Second instance: data should persist
         {
             let store = FileStore::new(store_dir).unwrap();
             let retrieved = store.get_file(&manifest.file_hash).unwrap();
             assert_eq!(retrieved, Some(manifest.clone()));
-
-            let bf = store.get_chunk_bitfield(&manifest.file_hash).unwrap();
-            assert!(bf.has_chunk(0));
-            assert!(!bf.has_chunk(1));
-            assert!(bf.has_chunk(2));
-
-            assert!(!store.is_complete(&manifest.file_hash).unwrap());
+            assert!(store.is_complete(&manifest.file_hash).unwrap());
         }
-    }
-
-    #[test]
-    fn file_path_returns_correct_path() {
-        let tmp = TempDir::new().unwrap();
-        let store = FileStore::new(tmp.path().to_path_buf()).unwrap();
-
-        let manifest = test_manifest(0xEE, 1);
-        store.add_file(&manifest).unwrap();
-
-        let path = store.file_path(&manifest.file_hash).unwrap();
-        let hex = data_encoding::HEXLOWER.encode(&manifest.file_hash);
-        let expected = tmp.path().join("bisc").join(&hex).join(&manifest.file_name);
-        assert_eq!(path, expected);
     }
 }

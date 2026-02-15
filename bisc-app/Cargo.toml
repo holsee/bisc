@@ -21,12 +21,12 @@ bisc-files.workspace = true
 data-encoding.workspace = true
 bisc-media.workspace = true
 bisc-net.workspace = true
+iroh-blobs.workspace = true
 bisc-protocol.workspace = true
 bisc-ui.workspace = true
 iced.workspace = true
 iroh.workspace = true
 rfd.workspace = true
-sha2.workspace = true
 directories.workspace = true
 serde.workspace = true
 tokio.workspace = true
@@ -37,6 +37,7 @@ tracing-subscriber.workspace = true
 [dev-dependencies]
 bisc-net = { workspace = true, features = ["test-util"] }
 iroh.workspace = true
+iroh-blobs.workspace = true
 tempfile.workspace = true
 
 [lints.clippy]

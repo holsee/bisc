@@ -39,7 +39,6 @@ pub enum ChannelMessage {
         file_hash: [u8; 32],
         file_name: String,
         file_size: u64,
-        chunk_count: u32,
     },
     TicketRefresh {
         new_bootstrap: EndpointAddr,
@@ -119,7 +118,6 @@ mod tests {
             file_hash: [0xAB; 32],
             file_name: "document.pdf".to_string(),
             file_size: 1_048_576,
-            chunk_count: 4,
         };
         let encoded = encode_channel_message(&msg).unwrap();
         let decoded = decode_channel_message(&encoded).unwrap();

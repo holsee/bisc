@@ -66,6 +66,27 @@ impl GossipHandle {
         (Self { gossip }, router)
     }
 
+    /// Create a new gossip handle with media and blobs protocol handlers
+    /// registered on the router.
+    ///
+    /// Returns both the gossip handle and the router (which must be kept alive).
+    pub fn with_all_protocols(
+        endpoint: &Endpoint,
+        media_protocol: crate::connection::MediaProtocol,
+        blobs_protocol: iroh_blobs::BlobsProtocol,
+    ) -> (Self, Router) {
+        let gossip = Gossip::builder().spawn(endpoint.clone());
+        let router = Router::builder(endpoint.clone())
+            .accept(iroh_gossip::ALPN, gossip.clone())
+            .accept(crate::connection::MediaProtocol::alpn(), media_protocol)
+            .accept(iroh_blobs::ALPN, blobs_protocol)
+            .spawn();
+
+        tracing::info!("gossip subsystem initialized with media and blobs protocols");
+
+        (Self { gossip }, router)
+    }
+
     /// Get the underlying gossip instance.
     pub fn gossip(&self) -> &Gossip {
         &self.gossip

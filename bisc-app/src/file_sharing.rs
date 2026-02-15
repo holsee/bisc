@@ -1,23 +1,21 @@
-//! File sharing integration: file picker, hashing, storage, and transfer.
+//! File sharing integration using iroh-blobs for content-addressed transfers.
 //!
-//! Connects the `FileStore`, `FileSender`/`FileReceiver`, and `SwarmDownloader`
-//! from `bisc-files` with the Iced application layer.
+//! Files are added to an iroh-blobs `MemStore`, announced via gossip, and
+//! downloaded by peers via the iroh-blobs protocol.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use bisc_files::store::FileStore;
-use bisc_files::swarm_download::{ChunkServer, SwarmDownloader, SwarmMetrics};
-use bisc_files::transfer::CHUNK_SIZE;
 use bisc_protocol::channel::ChannelMessage;
 use bisc_protocol::file::FileManifest;
 use bisc_protocol::types::EndpointId;
-use sha2::{Digest, Sha256};
+use iroh_blobs::store::mem::MemStore;
 
-/// Manages file sharing state: file store and pending operations.
+/// Manages file sharing state: metadata store and blob store.
 pub struct FileSharingState {
-    /// The file store (SQLite-backed).
+    /// The file metadata store (SQLite-backed).
     store: Option<Arc<FileStore>>,
     /// Storage directory path.
     storage_dir: PathBuf,
@@ -32,7 +30,7 @@ impl FileSharingState {
         }
     }
 
-    /// Initialize the file store (creates database if needed).
+    /// Initialize the metadata store (creates database if needed).
     pub fn init(&mut self) -> Result<()> {
         if self.store.is_some() {
             return Ok(());
@@ -45,69 +43,57 @@ impl FileSharingState {
         Ok(())
     }
 
-    /// Get the file store (if initialized).
+    /// Get the metadata store (if initialized).
     pub fn store(&self) -> Option<&Arc<FileStore>> {
         self.store.as_ref()
     }
 
-    /// Hash and register a file for sharing.
+    /// Add a file to the blob store and register metadata.
     ///
-    /// Returns the file manifest and hash suitable for gossip announcement.
-    pub async fn share_file(&self, file_path: &Path) -> Result<FileManifest> {
+    /// Returns the file manifest with BLAKE3 hash.
+    pub async fn share_file(
+        &self,
+        file_path: &Path,
+        blob_store: &MemStore,
+    ) -> Result<FileManifest> {
         let store = self.store.as_ref().context("file store not initialized")?;
-
-        // Read the file
-        let file_data = tokio::fs::read(file_path)
-            .await
-            .with_context(|| format!("failed to read file: {}", file_path.display()))?;
 
         let file_name = file_path
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| "unknown".to_string());
 
-        let file_size = file_data.len() as u64;
+        let file_size = tokio::fs::metadata(file_path)
+            .await
+            .with_context(|| format!("failed to stat file: {}", file_path.display()))?
+            .len();
 
-        // Compute SHA-256 hash
-        let mut hasher = Sha256::new();
-        hasher.update(&file_data);
-        let hash_result = hasher.finalize();
-        let mut file_hash = [0u8; 32];
-        file_hash.copy_from_slice(&hash_result);
+        // Add file to iroh-blobs store
+        let tag_info = blob_store
+            .blobs()
+            .add_path(file_path)
+            .await
+            .with_context(|| {
+                format!("failed to add file to blob store: {}", file_path.display())
+            })?;
 
-        let chunk_count = file_size.div_ceil(CHUNK_SIZE as u64) as u32;
+        let hash_bytes: [u8; 32] = *tag_info.hash.as_bytes();
 
         let manifest = FileManifest {
-            file_hash,
+            file_hash: hash_bytes,
             file_name: file_name.clone(),
             file_size,
-            chunk_size: CHUNK_SIZE,
-            chunk_count,
         };
 
-        // Register in store
+        // Register in metadata store
         store.add_file(&manifest)?;
-
-        // Copy file to storage directory
-        let dest = store.file_path(&file_hash)?;
-        if let Some(parent) = dest.parent() {
-            tokio::fs::create_dir_all(parent).await?;
-        }
-        tokio::fs::copy(file_path, &dest)
-            .await
-            .with_context(|| format!("failed to copy file to storage: {}", dest.display()))?;
-
-        // Mark all chunks as received (we have the full file)
-        for i in 0..chunk_count {
-            store.set_chunk_received(&file_hash, i)?;
-        }
+        store.set_complete(&hash_bytes)?;
 
         tracing::info!(
             file_name = %file_name,
-            file_hash = data_encoding::HEXLOWER.encode(&file_hash),
+            file_hash = data_encoding::HEXLOWER.encode(&hash_bytes),
             file_size = file_size,
-            chunk_count = chunk_count,
-            "file shared successfully"
+            "file shared via iroh-blobs"
         );
 
         Ok(manifest)
@@ -132,55 +118,20 @@ pub fn file_announce_message(manifest: &FileManifest, endpoint_id: EndpointId) -
         file_hash: manifest.file_hash,
         file_name: manifest.file_name.clone(),
         file_size: manifest.file_size,
-        chunk_count: manifest.chunk_count,
     }
 }
 
-/// Spawn a task that accepts incoming bi-directional streams on the given
-/// connection and serves file chunk requests via `ChunkServer`.
-pub fn spawn_chunk_server(
-    store: Arc<FileStore>,
-    connection: iroh::endpoint::Connection,
-    peer_id: String,
-) -> tokio::task::JoinHandle<()> {
-    tokio::spawn(async move {
-        let metrics = Arc::new(SwarmMetrics::default());
-        tracing::debug!(peer_id = %peer_id, "chunk server started");
-        loop {
-            match connection.accept_bi().await {
-                Ok((mut send, mut recv)) => {
-                    let s = store.clone();
-                    let m = metrics.clone();
-                    tokio::spawn(async move {
-                        let server = ChunkServer::new(s, m);
-                        if let Err(e) = server.handle_request(&mut send, &mut recv).await {
-                            tracing::debug!(error = %e, "chunk server request failed");
-                        }
-                    });
-                }
-                Err(_) => {
-                    tracing::debug!(peer_id = %peer_id, "chunk server: connection closed");
-                    break;
-                }
-            }
-        }
-    })
-}
-
-/// Register a file manifest in the local store so it is ready for download.
+/// Register a file manifest in the local metadata store so it appears in the UI.
 pub fn register_announced_file(
     store: &FileStore,
     file_hash: &[u8; 32],
     file_name: &str,
     file_size: u64,
-    chunk_count: u32,
 ) {
     let manifest = FileManifest {
         file_hash: *file_hash,
         file_name: file_name.to_string(),
         file_size,
-        chunk_size: CHUNK_SIZE,
-        chunk_count,
     };
     if let Err(e) = store.add_file(&manifest) {
         tracing::warn!(
@@ -191,54 +142,85 @@ pub fn register_announced_file(
     }
 }
 
-/// Download a file from peers using swarm download.
+/// Download a file from a peer using iroh-blobs.
 ///
-/// Opens bidirectional streams to each peer connection and downloads
-/// missing chunks via the `SwarmDownloader`.
+/// Connects to the peer on the iroh-blobs ALPN and downloads the blob.
 pub async fn download_file(
-    store: Arc<FileStore>,
+    blob_store: &MemStore,
     file_hash: [u8; 32],
-    connections: Vec<iroh::endpoint::Connection>,
+    endpoint: &iroh::Endpoint,
+    peer_node_ids: Vec<iroh::EndpointId>,
 ) -> Result<()> {
-    use bisc_files::swarm_download::PeerStream;
+    let hash = iroh_blobs::Hash::from_bytes(file_hash);
 
-    let mut peer_streams = Vec::new();
-    for (i, conn) in connections.iter().enumerate() {
-        match conn.open_bi().await {
-            Ok((send, recv)) => {
-                peer_streams.push(PeerStream { send, recv, id: i });
+    for node_id in &peer_node_ids {
+        tracing::debug!(
+            peer = %node_id,
+            hash = %hash.to_hex(),
+            "attempting blob download from peer"
+        );
+
+        match endpoint.connect(*node_id, iroh_blobs::ALPN).await {
+            Ok(connection) => {
+                let request = iroh_blobs::protocol::GetRequest::blob(hash);
+                let progress = blob_store.remote().execute_get(connection, request);
+                match progress.await {
+                    Ok(_stats) => {
+                        tracing::info!(
+                            hash = %hash.to_hex(),
+                            "blob download complete"
+                        );
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            peer = %node_id,
+                            error = %e,
+                            "blob download failed from peer, trying next"
+                        );
+                    }
+                }
             }
             Err(e) => {
-                tracing::warn!(peer_idx = i, error = %e, "failed to open bi stream for download");
+                tracing::warn!(
+                    peer = %node_id,
+                    error = %e,
+                    "failed to connect to peer for blob download"
+                );
             }
         }
     }
 
-    if peer_streams.is_empty() {
-        anyhow::bail!("no peers available for download");
-    }
+    anyhow::bail!("no peers available for download")
+}
 
-    // Ensure the output file directory exists
-    let file_path = store.file_path(&file_hash)?;
-    if let Some(parent) = file_path.parent() {
+/// Export a downloaded blob to a filesystem path.
+#[allow(dead_code)]
+pub async fn export_blob(
+    blob_store: &MemStore,
+    file_hash: [u8; 32],
+    destination: &Path,
+) -> Result<u64> {
+    let hash = iroh_blobs::Hash::from_bytes(file_hash);
+
+    if let Some(parent) = destination.parent() {
         tokio::fs::create_dir_all(parent).await?;
     }
-    // Create empty file if it doesn't exist
-    if !file_path.exists() {
-        tokio::fs::write(&file_path, &[]).await?;
-    }
 
-    let downloader = SwarmDownloader::new();
-    downloader
-        .download(&file_hash, &mut peer_streams, &store)
-        .await?;
+    let size = blob_store
+        .blobs()
+        .export(hash, destination)
+        .await
+        .with_context(|| format!("failed to export blob to {}", destination.display()))?;
 
     tracing::info!(
-        file_hash = data_encoding::HEXLOWER.encode(&file_hash),
-        "file download complete"
+        hash = %hash.to_hex(),
+        size,
+        destination = %destination.display(),
+        "blob exported to filesystem"
     );
 
-    Ok(())
+    Ok(size)
 }
 
 #[cfg(test)]
@@ -269,10 +251,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn share_file_hashes_and_stores() {
+    async fn share_file_adds_to_blob_store() {
         let dir = tempfile::tempdir().unwrap();
         let mut state = FileSharingState::new(dir.path().to_path_buf());
         state.init().unwrap();
+
+        let blob_store = MemStore::new();
 
         // Create a test file
         let test_file = dir.path().join("hello.txt");
@@ -280,12 +264,11 @@ mod tests {
             .await
             .unwrap();
 
-        let manifest = state.share_file(&test_file).await.unwrap();
+        let manifest = state.share_file(&test_file, &blob_store).await.unwrap();
         assert_eq!(manifest.file_name, "hello.txt");
         assert_eq!(manifest.file_size, 13);
-        assert_eq!(manifest.chunk_count, 1);
 
-        // Verify it's in the store
+        // Verify it's in the metadata store
         let stored = state
             .store
             .as_ref()
@@ -299,6 +282,11 @@ mod tests {
             .unwrap()
             .is_complete(&manifest.file_hash)
             .unwrap());
+
+        // Verify it's in the blob store
+        let hash = iroh_blobs::Hash::from_bytes(manifest.file_hash);
+        let has_blob = blob_store.blobs().has(hash).await.unwrap();
+        assert!(has_blob);
     }
 
     #[test]
@@ -307,8 +295,6 @@ mod tests {
             file_hash: [42u8; 32],
             file_name: "test.txt".to_string(),
             file_size: 100,
-            chunk_size: CHUNK_SIZE,
-            chunk_count: 1,
         };
         let endpoint_id = EndpointId([1u8; 32]);
         let msg = file_announce_message(&manifest, endpoint_id);
@@ -317,12 +303,10 @@ mod tests {
             ChannelMessage::FileAnnounce {
                 file_name,
                 file_size,
-                chunk_count,
                 ..
             } => {
                 assert_eq!(file_name, "test.txt");
                 assert_eq!(file_size, 100);
-                assert_eq!(chunk_count, 1);
             }
             other => panic!("expected FileAnnounce, got {:?}", other),
         }

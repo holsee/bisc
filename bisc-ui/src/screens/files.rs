@@ -34,8 +34,6 @@ pub struct SharedFile {
     pub status: FileStatus,
     /// Peer IDs that have this file.
     pub available_from: Vec<String>,
-    /// Total number of chunks.
-    pub chunk_count: u32,
 }
 
 /// Messages emitted by the files panel.
@@ -66,14 +64,7 @@ pub struct FilesPanel {
 
 impl FilesPanel {
     /// Add a newly announced file.
-    pub fn file_announced(
-        &mut self,
-        hash: String,
-        name: String,
-        size: u64,
-        sender: String,
-        chunk_count: u32,
-    ) {
+    pub fn file_announced(&mut self, hash: String, name: String, size: u64, sender: String) {
         if !self.files.iter().any(|f| f.hash == hash) {
             tracing::info!(
                 file_name = %name,
@@ -88,7 +79,6 @@ impl FilesPanel {
                 sender,
                 status: FileStatus::Available,
                 available_from: Vec::new(),
-                chunk_count,
             });
         }
     }
@@ -236,7 +226,6 @@ mod tests {
             "test.txt".to_string(),
             1024,
             "Alice".to_string(),
-            4,
         );
         assert_eq!(panel.files.len(), 1);
         assert_eq!(panel.files[0].name, "test.txt");
@@ -248,7 +237,6 @@ mod tests {
             "test.txt".to_string(),
             1024,
             "Alice".to_string(),
-            4,
         );
         assert_eq!(panel.files.len(), 1);
     }
@@ -261,7 +249,6 @@ mod tests {
             "test.txt".to_string(),
             1024,
             "Alice".to_string(),
-            4,
         );
 
         let action = panel.update(Message::RequestDownload("abc".to_string()));
@@ -276,7 +263,6 @@ mod tests {
             "test.txt".to_string(),
             1024,
             "Alice".to_string(),
-            4,
         );
 
         panel.update_progress("abc", 3, 10);
@@ -297,7 +283,6 @@ mod tests {
             "test.txt".to_string(),
             1024,
             "Alice".to_string(),
-            4,
         );
 
         panel.file_completed("abc");
@@ -312,7 +297,6 @@ mod tests {
             "test.txt".to_string(),
             1024,
             "Alice".to_string(),
-            4,
         );
 
         panel.update_progress("abc", 10, 10);

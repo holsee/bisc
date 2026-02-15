@@ -27,6 +27,7 @@ postcard = { version = "1", features = ["alloc"] }
 sha2 = "0.10"
 data-encoding = "2"
 iroh = "0.96"
+iroh-blobs = { version = "0.98", default-features = false, features = ["fs-store"] }
 iroh-gossip = "0.96"
 n0-future = "0.3"
 rand = "0.9"

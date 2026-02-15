@@ -1,38 +1,35 @@
-//! File sharing: 3 peers — A shares file, B downloads, A leaves, C downloads from B.
+//! File sharing via iroh-blobs: A shares file, B downloads using iroh-blobs protocol.
 
-use std::io::Write;
 use std::time::Duration;
 
 use bisc_files::store::FileStore;
-use bisc_files::transfer::{FileReceiver, FileSender};
 use bisc_net::channel::Channel;
+use iroh_blobs::store::mem::MemStore;
 
 use crate::helpers::{
-    init_test_tracing, setup_peer_with_media, wait_for_connection, wait_for_peer_left,
-    wait_for_peers, TestTimer, CONNECTION_TIMEOUT_SECS, PEER_DISCOVERY_TIMEOUT_SECS,
-    PEER_LEFT_TIMEOUT_SECS,
+    init_test_tracing, setup_peer_with_all_protocols, wait_for_connection, wait_for_peers,
+    TestTimer, CONNECTION_TIMEOUT_SECS, PEER_DISCOVERY_TIMEOUT_SECS,
 };
 
-/// Three-peer file sharing scenario: A shares -> B downloads -> A leaves -> C downloads from B.
+/// Two-peer file sharing via iroh-blobs: A adds file to blob store, B downloads via ALPN.
 #[tokio::test]
-async fn three_peer_file_sharing() {
+async fn two_peer_iroh_blobs_file_sharing() {
     init_test_tracing();
-    let mut timer = TestTimer::new("three_peer_file_sharing");
+    let mut timer = TestTimer::new("two_peer_iroh_blobs_file_sharing");
 
     let tmp = tempfile::TempDir::new().unwrap();
 
-    // Create a test file (4KB)
+    // Create a test file
     let file_dir = tmp.path().join("source");
     std::fs::create_dir_all(&file_dir).unwrap();
     let test_file = file_dir.join("test_document.txt");
-    {
-        let mut f = std::fs::File::create(&test_file).unwrap();
-        let data: Vec<u8> = (0..4096).map(|i| (i % 256) as u8).collect();
-        f.write_all(&data).unwrap();
-    }
+    let test_data: Vec<u8> = (0..4096).map(|i| (i % 256) as u8).collect();
+    tokio::fs::write(&test_file, &test_data).await.unwrap();
 
-    // Setup 3 peers with media protocol (needed for direct QUIC connections)
-    let (ep_a, gossip_a, _router_a, incoming_a) = setup_peer_with_media().await;
+    // Setup peer A with blob store and all protocols
+    let blob_store_a = MemStore::new();
+    let (ep_a, gossip_a, _router_a, incoming_a) =
+        setup_peer_with_all_protocols(&blob_store_a).await;
     let (mut channel_a, ticket) = Channel::create(
         ep_a.endpoint(),
         &gossip_a,
@@ -44,7 +41,10 @@ async fn three_peer_file_sharing() {
 
     tokio::time::sleep(Duration::from_millis(200)).await;
 
-    let (ep_b, gossip_b, _router_b, incoming_b) = setup_peer_with_media().await;
+    // Setup peer B with blob store and all protocols
+    let blob_store_b = MemStore::new();
+    let (ep_b, gossip_b, _router_b, incoming_b) =
+        setup_peer_with_all_protocols(&blob_store_b).await;
     let mut channel_b = Channel::join(
         ep_b.endpoint(),
         &gossip_b,
@@ -63,145 +63,78 @@ async fn three_peer_file_sharing() {
 
     wait_for_connection(&mut channel_a, b_id, CONNECTION_TIMEOUT_SECS).await;
     wait_for_connection(&mut channel_b, a_id, CONNECTION_TIMEOUT_SECS).await;
-    timer.phase("ab_setup");
+    timer.phase("setup");
 
-    let peer_conn_a_to_b = channel_a.connection(&b_id).await.unwrap();
-    let peer_conn_b_from_a = channel_b.connection(&a_id).await.unwrap();
-
-    // --- Phase 1: A sends file to B ---
-    let store_b = FileStore::new(tmp.path().join("store_b")).unwrap();
-
-    let send_path = test_file.clone();
-    let sender_conn = peer_conn_a_to_b.connection().clone();
-    let receiver_conn = peer_conn_b_from_a.connection().clone();
-
-    // A opens bi-stream, B accepts
-    let sender_handle = tokio::spawn(async move {
-        let (mut send, mut recv) = sender_conn.open_bi().await.unwrap();
-        FileSender::default()
-            .send_file(&send_path, &mut send, &mut recv)
-            .await
-            .unwrap()
-    });
-
-    let receiver_handle = tokio::spawn(async move {
-        let (mut send, mut recv) = receiver_conn.accept_bi().await.unwrap();
-        FileReceiver::default()
-            .receive_file(&mut send, &mut recv, &store_b)
-            .await
-            .unwrap()
-    });
-
-    let sent_manifest = tokio::time::timeout(Duration::from_secs(10), sender_handle)
+    // --- Phase 1: A adds file to blob store ---
+    let tag_info = blob_store_a
+        .blobs()
+        .add_path(&test_file)
         .await
-        .expect("sender timed out")
-        .expect("sender panicked");
-    let recv_manifest = tokio::time::timeout(Duration::from_secs(10), receiver_handle)
-        .await
-        .expect("receiver timed out")
-        .expect("receiver panicked");
+        .expect("failed to add file to blob store");
+    let file_hash: [u8; 32] = *tag_info.hash.as_bytes();
 
-    assert_eq!(sent_manifest.file_hash, recv_manifest.file_hash);
-    assert_eq!(recv_manifest.file_name, "test_document.txt");
-    assert_eq!(recv_manifest.file_size, 4096);
-    timer.phase("ab_transfer");
+    // Register in metadata store
+    let store_a = FileStore::new(tmp.path().join("store_a")).unwrap();
+    let manifest = bisc_protocol::file::FileManifest {
+        file_hash,
+        file_name: "test_document.txt".to_string(),
+        file_size: 4096,
+    };
+    store_a.add_file(&manifest).unwrap();
+    store_a.set_complete(&file_hash).unwrap();
+    timer.phase("share");
 
-    tracing::info!("Phase 1: A->B file transfer complete");
-
-    // Verify B has the file
-    let store_b = FileStore::new(tmp.path().join("store_b")).unwrap();
-    let stored = store_b.get_file(&recv_manifest.file_hash).unwrap();
-    assert!(stored.is_some(), "B should have the file in store");
-
-    // --- Phase 2: A leaves, C joins via B's refreshed ticket ---
-    let a_id_for_leave = channel_a.our_endpoint_id();
-    channel_a.leave();
-    // Give the leave message time to propagate via gossip before closing the endpoint
-    tokio::time::sleep(Duration::from_millis(200)).await;
-    ep_a.close().await;
-    tracing::info!("A has left the channel");
-
-    // Wait for B to detect A's departure before refreshing ticket
-    wait_for_peer_left(&mut channel_b, a_id_for_leave, PEER_LEFT_TIMEOUT_SECS).await;
-    tracing::info!("B detected A left");
-
-    // B refreshes the ticket so C can bootstrap from B's address
-    let refreshed_ticket = channel_b.refresh_ticket();
-
-    // C joins via B's refreshed ticket
-    let (ep_c, gossip_c, _router_c, incoming_c) = setup_peer_with_media().await;
-    let mut channel_c = Channel::join(
-        ep_c.endpoint(),
-        &gossip_c,
-        &refreshed_ticket,
-        "charlie".to_string(),
-        Some(incoming_c),
-    )
-    .await
-    .unwrap();
-
-    wait_for_peers(&mut channel_b, 1, PEER_DISCOVERY_TIMEOUT_SECS).await;
-    wait_for_peers(&mut channel_c, 1, PEER_DISCOVERY_TIMEOUT_SECS).await;
-
-    let b_id = channel_b.our_endpoint_id();
-    let c_id = channel_c.our_endpoint_id();
-
-    wait_for_connection(&mut channel_b, c_id, CONNECTION_TIMEOUT_SECS).await;
-    wait_for_connection(&mut channel_c, b_id, CONNECTION_TIMEOUT_SECS).await;
-    timer.phase("bc_setup");
-
-    let peer_conn_b_to_c = channel_b.connection(&c_id).await.unwrap();
-    let peer_conn_c_from_b = channel_c.connection(&b_id).await.unwrap();
-
-    // --- Phase 3: B sends file to C ---
-    let store_c = FileStore::new(tmp.path().join("store_c")).unwrap();
-    let b_file_path = store_b.file_path(&recv_manifest.file_hash).unwrap();
-
-    let sender_conn = peer_conn_b_to_c.connection().clone();
-    let receiver_conn = peer_conn_c_from_b.connection().clone();
-
-    let sender_handle = tokio::spawn(async move {
-        let (mut send, mut recv) = sender_conn.open_bi().await.unwrap();
-        FileSender::default()
-            .send_file(&b_file_path, &mut send, &mut recv)
-            .await
-            .unwrap()
-    });
-
-    let receiver_handle = tokio::spawn(async move {
-        let (mut send, mut recv) = receiver_conn.accept_bi().await.unwrap();
-        FileReceiver::default()
-            .receive_file(&mut send, &mut recv, &store_c)
-            .await
-            .unwrap()
-    });
-
-    let sent_manifest_2 = tokio::time::timeout(Duration::from_secs(10), sender_handle)
-        .await
-        .expect("sender timed out")
-        .expect("sender panicked");
-    let recv_manifest_2 = tokio::time::timeout(Duration::from_secs(10), receiver_handle)
-        .await
-        .expect("receiver timed out")
-        .expect("receiver panicked");
-
-    assert_eq!(sent_manifest_2.file_hash, recv_manifest_2.file_hash);
-    assert_eq!(
-        recv_manifest_2.file_hash, recv_manifest.file_hash,
-        "C should have the same file as B"
+    tracing::info!(
+        file_hash = data_encoding::HEXLOWER.encode(&file_hash),
+        "file shared by A"
     );
-    timer.phase("bc_transfer");
 
-    tracing::info!("Phase 3: B->C file transfer complete (A was gone)");
+    // --- Phase 2: B downloads file from A via iroh-blobs ---
+    let a_iroh_id = ep_a.endpoint().id();
+    let hash = iroh_blobs::Hash::from_bytes(file_hash);
 
-    // Verify C has the file
-    let store_c = FileStore::new(tmp.path().join("store_c")).unwrap();
-    let stored_c = store_c.get_file(&recv_manifest_2.file_hash).unwrap();
-    assert!(stored_c.is_some(), "C should have the file in store");
+    let connection = ep_b
+        .endpoint()
+        .connect(a_iroh_id, iroh_blobs::ALPN)
+        .await
+        .expect("failed to connect to peer A for blob download");
+
+    let request = iroh_blobs::protocol::GetRequest::blob(hash);
+    blob_store_b
+        .remote()
+        .execute_get(connection, request)
+        .await
+        .expect("blob download failed");
+    timer.phase("download");
+
+    tracing::info!("B downloaded file from A");
+
+    // Verify B has the blob
+    let has_blob = blob_store_b.blobs().has(hash).await.unwrap();
+    assert!(has_blob, "B should have the blob after download");
+
+    // --- Phase 3: Export and verify file contents ---
+    let export_path = tmp.path().join("exported.txt");
+    let exported_size = blob_store_b
+        .blobs()
+        .export(hash, &export_path)
+        .await
+        .expect("failed to export blob");
+
+    assert_eq!(exported_size, 4096);
+
+    let exported_data = tokio::fs::read(&export_path).await.unwrap();
+    assert_eq!(
+        exported_data, test_data,
+        "exported file should match original"
+    );
+    timer.phase("verify");
+
+    tracing::info!("File verified — content matches");
 
     // Cleanup
+    channel_a.leave();
     channel_b.leave();
-    channel_c.leave();
+    ep_a.close().await;
     ep_b.close().await;
-    ep_c.close().await;
 }
