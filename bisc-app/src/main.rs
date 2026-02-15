@@ -1,15 +1,19 @@
 mod app;
 pub mod settings;
+mod voice;
 
 use std::sync::{Arc, Mutex};
 
 use app::{AppAction, AppMessage, Screen};
 use bisc_net::{BiscEndpoint, Channel, ChannelEvent, GossipHandle};
+use bisc_protocol::channel::ChannelMessage;
 use bisc_protocol::ticket::BiscTicket;
+use bisc_protocol::types::EndpointId;
 use iced::futures::Stream;
 use iroh::protocol::Router;
 use settings::Settings;
 use tokio::sync::mpsc;
+use voice::VoiceState;
 
 use iced::{Element, Subscription};
 use tracing_subscriber::EnvFilter;
@@ -138,6 +142,39 @@ fn channel_event_stream(slot: &ChannelEventRxSlot) -> impl Stream<Item = AppMess
     })
 }
 
+/// Start a voice pipeline for a newly connected peer.
+async fn start_peer_voice(
+    voice: &Arc<tokio::sync::Mutex<VoiceState>>,
+    net: &Arc<Mutex<Option<Net>>>,
+    peer_hex_id: &str,
+) -> anyhow::Result<()> {
+    let endpoint_id =
+        EndpointId::from_hex(peer_hex_id).ok_or_else(|| anyhow::anyhow!("invalid peer hex id"))?;
+
+    // Get the QUIC connection (non-async, using try_read on the connections RwLock)
+    let connection = {
+        let guard = net.lock().unwrap();
+        let n = guard
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("net not initialized"))?;
+        let channel = n
+            .channel
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("no active channel"))?;
+        channel
+            .peer_quic_connection(&endpoint_id)
+            .ok_or_else(|| anyhow::anyhow!("no connection to peer"))?
+    };
+
+    voice
+        .lock()
+        .await
+        .add_peer(peer_hex_id.to_string(), connection)
+        .await?;
+
+    Ok(())
+}
+
 /// Top-level Iced application wrapper.
 ///
 /// Bridges the `App` state machine to the Iced runtime by converting
@@ -148,6 +185,8 @@ struct BiscApp {
     net: Arc<Mutex<Option<Net>>>,
     /// Channel event receiver, extracted from Channel on create/join.
     channel_event_rx: Arc<Mutex<Option<mpsc::UnboundedReceiver<ChannelEvent>>>>,
+    /// Voice call state: audio devices, pipelines, mixing.
+    voice: Arc<tokio::sync::Mutex<VoiceState>>,
 }
 
 impl Default for BiscApp {
@@ -158,12 +197,48 @@ impl Default for BiscApp {
             settings,
             net: Arc::new(Mutex::new(None)),
             channel_event_rx: Arc::new(Mutex::new(None)),
+            voice: Arc::new(tokio::sync::Mutex::new(VoiceState::new())),
         }
     }
 }
 
 impl BiscApp {
     fn update(&mut self, message: AppMessage) -> iced::Task<AppMessage> {
+        // Pre-process voice-relevant events before delegating to app state.
+        match &message {
+            AppMessage::ChannelCreated(_) | AppMessage::ChannelJoined => {
+                // Initialize audio devices when entering a channel
+                let voice = Arc::clone(&self.voice);
+                tokio::spawn(async move {
+                    voice.lock().await.init();
+                });
+            }
+            AppMessage::PeerConnected(hex_id) => {
+                // Start a voice pipeline for the newly connected peer
+                let voice = Arc::clone(&self.voice);
+                let net = Arc::clone(&self.net);
+                let peer_id = hex_id.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = start_peer_voice(&voice, &net, &peer_id).await {
+                        tracing::warn!(
+                            peer_id = %peer_id,
+                            error = %e,
+                            "failed to start voice pipeline for peer"
+                        );
+                    }
+                });
+            }
+            AppMessage::PeerLeft(hex_id) => {
+                // Stop the voice pipeline for the departing peer
+                let voice = Arc::clone(&self.voice);
+                let peer_id = hex_id.clone();
+                tokio::spawn(async move {
+                    voice.lock().await.remove_peer(&peer_id).await;
+                });
+            }
+            _ => {}
+        }
+
         let action = self.app.update(message);
         match action {
             AppAction::None => iced::Task::none(),
@@ -231,7 +306,41 @@ impl BiscApp {
                     },
                 )
             }
+            AppAction::SetMic(on) => {
+                let voice = Arc::clone(&self.voice);
+                let net = Arc::clone(&self.net);
+                tokio::spawn(async move {
+                    voice.lock().await.set_muted(!on);
+                    // Broadcast media state change via gossip
+                    let our_id = {
+                        let guard = net.lock().unwrap();
+                        guard
+                            .as_ref()
+                            .and_then(|n| n.channel.as_ref().map(|c| c.our_endpoint_id()))
+                    };
+                    if let Some(endpoint_id) = our_id {
+                        let guard = net.lock().unwrap();
+                        if let Some(ref n) = *guard {
+                            if let Some(ref channel) = n.channel {
+                                channel.broadcast_message(ChannelMessage::MediaStateUpdate {
+                                    endpoint_id,
+                                    audio_muted: !on,
+                                    video_enabled: false,
+                                    screen_sharing: false,
+                                    app_audio_sharing: false,
+                                });
+                            }
+                        }
+                    }
+                });
+                iced::Task::none()
+            }
             AppAction::LeaveChannel => {
+                // Stop all voice pipelines
+                let voice = Arc::clone(&self.voice);
+                tokio::spawn(async move {
+                    voice.lock().await.shutdown().await;
+                });
                 // Drop the event receiver (ends the subscription)
                 *self.channel_event_rx.lock().unwrap() = None;
                 if let Some(ref mut n) = *self.net.lock().unwrap() {

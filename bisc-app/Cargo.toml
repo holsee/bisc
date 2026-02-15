@@ -4,6 +4,10 @@ edition.workspace = true
 version.workspace = true
 license.workspace = true
 
+[features]
+default = []
+audio = ["bisc-media/audio"]
+
 [[bin]]
 name = "bisc"
 path = "src/main.rs"

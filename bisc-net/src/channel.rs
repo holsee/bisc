@@ -70,6 +70,8 @@ pub struct Channel {
     event_rx: Option<mpsc::UnboundedReceiver<ChannelEvent>>,
     shutdown_tx: watch::Sender<bool>,
     endpoint: iroh::Endpoint,
+    /// Command channel for broadcasting messages via the event loop.
+    broadcast_cmd_tx: mpsc::UnboundedSender<ChannelMessage>,
 }
 
 impl Channel {
@@ -254,6 +256,27 @@ impl Channel {
         let _ = self.shutdown_tx.send(true);
     }
 
+    /// Get the underlying QUIC connection to a peer (non-async).
+    ///
+    /// Returns `None` if the peer has no connection or if the lock is
+    /// currently held by a writer.
+    pub fn peer_quic_connection(&self, peer_id: &EndpointId) -> Option<iroh::endpoint::Connection> {
+        self.connections
+            .try_read()
+            .ok()?
+            .get(peer_id)
+            .map(|pc| pc.connection().clone())
+    }
+
+    /// Broadcast a channel message via gossip.
+    ///
+    /// The message is sent to the event loop which performs the actual broadcast.
+    pub fn broadcast_message(&self, msg: ChannelMessage) {
+        if self.broadcast_cmd_tx.send(msg).is_err() {
+            tracing::warn!("broadcast command channel closed");
+        }
+    }
+
     fn make_ticket(secret: &[u8; 32], endpoint: &iroh::Endpoint) -> BiscTicket {
         let iroh_addr = endpoint.addr();
         let mut addrs = Vec::new();
@@ -292,6 +315,7 @@ impl Channel {
             Arc::new(RwLock::new(HashMap::new()));
         let (event_tx, event_rx) = mpsc::unbounded_channel();
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
+        let (broadcast_cmd_tx, broadcast_cmd_rx) = mpsc::unbounded_channel();
 
         let peers_clone = peers.clone();
         let connections_clone = connections.clone();
@@ -306,6 +330,7 @@ impl Channel {
             shutdown_rx,
             endpoint.clone(),
             incoming_rx,
+            broadcast_cmd_rx,
         ));
 
         Self {
@@ -319,6 +344,7 @@ impl Channel {
             event_rx: Some(event_rx),
             shutdown_tx,
             endpoint,
+            broadcast_cmd_tx,
         }
     }
 
@@ -333,6 +359,7 @@ impl Channel {
         mut shutdown_rx: watch::Receiver<bool>,
         endpoint: iroh::Endpoint,
         mut incoming_rx: Option<mpsc::UnboundedReceiver<iroh::endpoint::Connection>>,
+        mut broadcast_cmd_rx: mpsc::UnboundedReceiver<ChannelMessage>,
     ) {
         let (sender, mut receiver) = sub.into_parts();
         let mut heartbeat_interval = tokio::time::interval(HEARTBEAT_INTERVAL);
@@ -395,6 +422,15 @@ impl Channel {
                             "incoming connection from unknown peer, closing"
                         );
                         conn.close(1u8.into(), b"unknown peer");
+                    }
+                }
+
+                // Handle broadcast commands from the application layer
+                Some(msg) = broadcast_cmd_rx.recv() => {
+                    let data = bisc_protocol::channel::encode_channel_message(&msg)
+                        .unwrap_or_default();
+                    if let Err(e) = sender.broadcast(data.into()).await {
+                        tracing::warn!(error = %e, "failed to broadcast command message");
                     }
                 }
 
