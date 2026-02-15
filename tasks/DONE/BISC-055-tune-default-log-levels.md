@@ -27,8 +27,8 @@ Ensure `EnvFilter::try_from_default_env()` is still checked first, so users can 
 
 ## Acceptance Criteria
 
-- [ ] Default log output shows bisc application logs without wgpu shader dumps
-- [ ] `RUST_LOG` environment variable still overrides the defaults
-- [ ] `cargo build --workspace` compiles
-- [ ] `cargo fmt --all --check` passes
-- [ ] `cargo clippy --workspace -- -D warnings` passes
+- [x] Default log output shows bisc application logs without wgpu shader dumps
+- [x] `RUST_LOG` environment variable still overrides the defaults
+- [x] `cargo build --workspace` compiles
+- [x] `cargo fmt --all --check` passes
+- [x] `cargo clippy --workspace -- -D warnings` passes

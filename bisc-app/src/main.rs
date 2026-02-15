@@ -1099,7 +1099,11 @@ fn main() -> iced::Result {
 
     tracing_subscriber::fmt()
         .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+                EnvFilter::new(
+                    "info,wgpu_hal=warn,wgpu_core=warn,naga=warn,iced_wgpu=warn,iced_winit=warn,fontdb=warn",
+                )
+            }),
         )
         .init();
 
