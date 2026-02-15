@@ -24,7 +24,7 @@ Setting `WGPU_BACKEND=dx12` resolves the crash. DX12 is the native, most reliabl
 - [x] `WGPU_BACKEND` defaults to `dx12` on Windows when not explicitly set
 - [x] Application launches without crash on Windows
 - [x] Users can override via `WGPU_BACKEND` environment variable
-- [ ] `cargo build --workspace` compiles
-- [ ] `cargo fmt --all --check` passes
-- [ ] `cargo clippy --workspace -- -D warnings` passes
-- [ ] `cargo test --workspace` — all existing tests pass
+- [x] `cargo build --workspace` compiles
+- [x] `cargo fmt --all --check` passes
+- [x] `cargo clippy --workspace -- -D warnings` passes
+- [x] `cargo test --workspace` — all existing tests pass
