@@ -30,3 +30,4 @@ Discoveries, workarounds, and architectural insights captured during development
 
 - [cpal Requires ALSA Dev Headers on Linux](platform/cpal-alsa-dev-headers.md) — cpal depends on alsa-sys which needs libasound2-dev; made optional behind `audio` feature flag
 - [Windows wgpu Backend Selection](platform/windows-wgpu-backend.md) — Force DX12 backend on Windows to avoid Vulkan driver crashes; set WGPU_BACKEND before Iced initialization
+- [scap 0.1.0-beta.1 Linux API Bugs](platform/scap-linux-api-bugs.md) — Vendored scap to fix Linux Frame enum paths, display_time types, and nokhwa Camera non-Send issue
