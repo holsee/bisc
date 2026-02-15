@@ -142,10 +142,7 @@ impl CallScreen {
 
     /// Update a remote peer's video frame.
     pub fn update_video_frame(&mut self, peer_id: &str, width: u32, height: u32, rgba_data: &[u8]) {
-        let surface = self
-            .video_surfaces
-            .entry(peer_id.to_string())
-            .or_default();
+        let surface = self.video_surfaces.entry(peer_id.to_string()).or_default();
         surface.update_frame(width, height, rgba_data);
     }
 

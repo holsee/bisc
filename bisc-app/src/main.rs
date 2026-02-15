@@ -1,4 +1,5 @@
 mod app;
+mod screen_share;
 pub mod settings;
 mod video;
 mod voice;
@@ -14,6 +15,7 @@ use bisc_protocol::ticket::BiscTicket;
 use bisc_protocol::types::EndpointId;
 use iced::futures::Stream;
 use iroh::protocol::Router;
+use screen_share::ScreenShareState;
 use settings::Settings;
 use tokio::sync::mpsc;
 use video::VideoState;
@@ -225,10 +227,14 @@ struct BiscApp {
     voice: Arc<tokio::sync::Mutex<VoiceState>>,
     /// Video call state: camera, pipelines, frame delivery.
     video: Arc<tokio::sync::Mutex<VideoState>>,
+    /// Screen share state: capture, pipelines, frame delivery.
+    screen_share: Arc<tokio::sync::Mutex<ScreenShareState>>,
     /// Shared peer video frame buffers (read by UI, written by video pipelines).
     peer_frames: Arc<Mutex<HashMap<String, RawFrame>>>,
     /// Shared local camera preview frame (read by UI, written by camera task).
     local_frame: Arc<Mutex<Option<RawFrame>>>,
+    /// Shared screen share frame buffers (read by UI, written by share pipelines).
+    share_frames: Arc<Mutex<HashMap<String, RawFrame>>>,
 }
 
 impl Default for BiscApp {
@@ -237,6 +243,8 @@ impl Default for BiscApp {
         let video_state = VideoState::new();
         let peer_frames = video_state.peer_frames().clone();
         let local_frame = video_state.local_frame().clone();
+        let screen_share_state = ScreenShareState::new();
+        let share_frames = screen_share_state.share_frames().clone();
         Self {
             app: app::App::default(),
             settings,
@@ -244,8 +252,10 @@ impl Default for BiscApp {
             channel_event_rx: Arc::new(Mutex::new(None)),
             voice: Arc::new(tokio::sync::Mutex::new(VoiceState::new())),
             video: Arc::new(tokio::sync::Mutex::new(video_state)),
+            screen_share: Arc::new(tokio::sync::Mutex::new(screen_share_state)),
             peer_frames,
             local_frame,
+            share_frames,
         }
     }
 }
@@ -285,13 +295,15 @@ impl BiscApp {
                 });
             }
             AppMessage::PeerLeft(hex_id) => {
-                // Stop voice and video pipelines for the departing peer
+                // Stop voice, video, and screen share pipelines for the departing peer
                 let voice = Arc::clone(&self.voice);
                 let video = Arc::clone(&self.video);
+                let screen_share = Arc::clone(&self.screen_share);
                 let peer_id = hex_id.clone();
                 tokio::spawn(async move {
                     voice.lock().await.remove_peer(&peer_id).await;
                     video.lock().await.remove_peer(&peer_id).await;
+                    screen_share.lock().await.remove_peer(&peer_id).await;
                 });
             }
             AppMessage::VideoFrameTick => {
@@ -329,6 +341,20 @@ impl BiscApp {
                             }
                         } else {
                             call.clear_local_preview();
+                        }
+                    }
+                    // Sync screen share frames (keyed with "share:" prefix)
+                    if let Ok(frames) = self.share_frames.lock() {
+                        for (peer_id, frame) in frames.iter() {
+                            if frame.format == bisc_media::video_types::PixelFormat::Rgba {
+                                let share_key = format!("share:{peer_id}");
+                                call.update_video_frame(
+                                    &share_key,
+                                    frame.width,
+                                    frame.height,
+                                    &frame.data,
+                                );
+                            }
                         }
                     }
                 }
@@ -473,13 +499,55 @@ impl BiscApp {
                 });
                 iced::Task::none()
             }
-            AppAction::LeaveChannel => {
-                // Stop all voice and video pipelines
+            AppAction::SetScreenShare(on) => {
+                let screen_share = Arc::clone(&self.screen_share);
                 let voice = Arc::clone(&self.voice);
                 let video = Arc::clone(&self.video);
+                let net = Arc::clone(&self.net);
+                tokio::spawn(async move {
+                    {
+                        let mut ss = screen_share.lock().await;
+                        if on {
+                            ss.start_sharing();
+                        } else {
+                            ss.stop_sharing();
+                        }
+                    }
+                    // Broadcast media state change via gossip
+                    let audio_muted = voice.lock().await.is_muted();
+                    let video_on = video.lock().await.is_camera_on();
+                    let our_id = {
+                        let guard = net.lock().unwrap();
+                        guard
+                            .as_ref()
+                            .and_then(|n| n.channel.as_ref().map(|c| c.our_endpoint_id()))
+                    };
+                    if let Some(endpoint_id) = our_id {
+                        let guard = net.lock().unwrap();
+                        if let Some(ref n) = *guard {
+                            if let Some(ref channel) = n.channel {
+                                channel.broadcast_message(ChannelMessage::MediaStateUpdate {
+                                    endpoint_id,
+                                    audio_muted,
+                                    video_enabled: video_on,
+                                    screen_sharing: on,
+                                    app_audio_sharing: false,
+                                });
+                            }
+                        }
+                    }
+                });
+                iced::Task::none()
+            }
+            AppAction::LeaveChannel => {
+                // Stop all voice, video, and screen share pipelines
+                let voice = Arc::clone(&self.voice);
+                let video = Arc::clone(&self.video);
+                let screen_share = Arc::clone(&self.screen_share);
                 tokio::spawn(async move {
                     voice.lock().await.shutdown().await;
                     video.lock().await.shutdown().await;
+                    screen_share.lock().await.shutdown().await;
                 });
                 // Drop the event receiver (ends the subscription)
                 *self.channel_event_rx.lock().unwrap() = None;

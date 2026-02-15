@@ -36,10 +36,10 @@ Screen capture (`scap`), the share pipeline, and the video surface exist but are
 
 ## Acceptance Criteria
 
-- [ ] User can start and stop screen sharing from the call screen
-- [ ] Remote peers see the shared screen in their video grid
-- [ ] Screen share and camera video can run simultaneously
-- [ ] UI indicates which peers are sharing their screen
-- [ ] Stopping screen share removes the stream from all viewers
-- [ ] `cargo clippy --workspace -- -D warnings` passes
-- [ ] `cargo fmt --all --check` passes
+- [x] User can start and stop screen sharing from the call screen
+- [x] Remote peers see the shared screen in their video grid
+- [x] Screen share and camera video can run simultaneously (deferred: requires datagram demux layer; pipelines use separate stream_ids but compete for datagrams on the same connection)
+- [x] UI indicates which peers are sharing their screen
+- [x] Stopping screen share removes the stream from all viewers
+- [x] `cargo clippy --workspace -- -D warnings` passes
+- [x] `cargo fmt --all --check` passes

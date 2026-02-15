@@ -9,6 +9,7 @@ default = []
 audio = ["bisc-media/audio"]
 video = ["bisc-media/video"]
 video-codec = ["bisc-media/video-codec"]
+screen-capture = ["bisc-media/screen-capture"]
 
 [[bin]]
 name = "bisc"
