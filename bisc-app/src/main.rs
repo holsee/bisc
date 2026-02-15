@@ -291,6 +291,13 @@ impl BiscApp {
         app.settings_screen.display_name = settings.display_name.clone();
         app.settings_screen.storage_dir = storage_dir_str;
 
+        // Surface file store init errors to the UI
+        if let Some(err) = file_sharing_state.init_error() {
+            app.files_panel
+                .set_error(format!("File store error: {err}"));
+            app.settings_screen.error = Some(format!("File store error: {err}"));
+        }
+
         Self {
             app,
             settings,
@@ -318,12 +325,13 @@ impl BiscApp {
                 tokio::spawn(async move {
                     voice.lock().await.init();
                 });
-                // Initialize file store when entering a channel
+                // File store is eagerly initialized in BiscApp::new();
+                // check for and surface any init error.
                 let file_sharing = Arc::clone(&self.file_sharing);
                 tokio::spawn(async move {
-                    let mut fs = file_sharing.lock().await;
-                    if let Err(e) = fs.init() {
-                        tracing::error!(error = %e, "failed to initialize file store");
+                    let fs = file_sharing.lock().await;
+                    if let Some(err) = fs.init_error() {
+                        tracing::error!(error = %err, "file store not available");
                     }
                 });
             }
@@ -481,7 +489,36 @@ impl BiscApp {
             AppAction::CopyToClipboard(text) => iced::clipboard::write(text),
             AppAction::SaveSettings => {
                 self.settings.display_name = self.app.settings_screen.display_name.clone();
-                self.settings.storage_dir = PathBuf::from(&self.app.settings_screen.storage_dir);
+                let new_storage_dir = PathBuf::from(&self.app.settings_screen.storage_dir);
+
+                // Validate and update storage directory if changed
+                if new_storage_dir != self.settings.storage_dir {
+                    let file_sharing = Arc::clone(&self.file_sharing);
+                    let new_dir = new_storage_dir.clone();
+                    // Validate synchronously via a blocking task
+                    let settings_screen = &mut self.app.settings_screen;
+                    match bisc_files::store::validate_storage_dir(&new_dir) {
+                        Ok(()) => {
+                            settings_screen.error = None;
+                            self.settings.storage_dir = new_storage_dir;
+                            tokio::spawn(async move {
+                                let mut fs = file_sharing.lock().await;
+                                if let Err(e) = fs.update_storage_dir(new_dir) {
+                                    tracing::error!(error = %e, "failed to update file store storage dir");
+                                }
+                            });
+                        }
+                        Err(e) => {
+                            let err_msg = format!("Invalid storage directory: {e}");
+                            tracing::warn!(error = %e, "storage directory validation failed");
+                            settings_screen.error = Some(err_msg);
+                            // Don't update storage_dir in settings
+                        }
+                    }
+                } else {
+                    self.settings.storage_dir = new_storage_dir;
+                }
+
                 // Convert UI quality enums to settings quality enums
                 self.settings.video_quality =
                     ui_quality_to_settings(self.app.settings_screen.video_quality);

@@ -77,6 +77,8 @@ pub struct SettingsScreen {
     pub output_devices: Vec<String>,
     /// Whether settings have been modified.
     pub dirty: bool,
+    /// Error message (e.g. invalid storage directory).
+    pub error: Option<String>,
 }
 
 impl Default for SettingsScreen {
@@ -92,6 +94,7 @@ impl Default for SettingsScreen {
             input_devices: Vec::new(),
             output_devices: Vec::new(),
             dirty: false,
+            error: None,
         }
     }
 }
@@ -173,6 +176,16 @@ impl SettingsScreen {
         let storage_row = row![storage_input, browse_btn]
             .spacing(8)
             .align_y(Alignment::Center);
+
+        // Error message (e.g. invalid storage dir)
+        let error_text: Element<'_, Message, Theme, Renderer> = if let Some(ref err) = self.error {
+            text(err)
+                .size(12)
+                .color(iced::Color::from_rgb(1.0, 0.3, 0.3))
+                .into()
+        } else {
+            column![].into()
+        };
 
         // Audio input device
         let input_label = text("Audio Input").size(14);
@@ -277,6 +290,7 @@ impl SettingsScreen {
             name_input,
             storage_label,
             storage_row,
+            error_text,
             input_label,
             input_picker,
             output_label,

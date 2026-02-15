@@ -39,12 +39,12 @@ Add more context to the "failed to insert file" error to include the storage dir
 
 ## Acceptance Criteria
 
-- [ ] File store is initialized before any file operations can be attempted
-- [ ] No race condition between init and file sharing
-- [ ] Storage directory validation on settings save
-- [ ] File store init errors are visible in the UI
-- [ ] `cargo build --workspace` compiles
-- [ ] `cargo clippy --workspace -- -D warnings` passes
-- [ ] `cargo test --workspace` passes
-- [ ] Unit test: sharing a file with an initialized store succeeds
-- [ ] Unit test: sharing a file with an unwritable storage dir produces a clear error
+- [x] File store is initialized before any file operations can be attempted
+- [x] No race condition between init and file sharing
+- [x] Storage directory validation on settings save
+- [x] File store init errors are visible in the UI
+- [x] `cargo build --workspace` compiles
+- [x] `cargo clippy --workspace -- -D warnings` passes
+- [x] `cargo test --workspace` passes
+- [x] Unit test: sharing a file with an initialized store succeeds
+- [x] Unit test: sharing a file with an unwritable storage dir produces a clear error

@@ -304,6 +304,7 @@ impl App {
             }
             AppMessage::FileShared { hash, name, size } => {
                 // Add to our files panel as already downloaded (we have it)
+                self.files_panel.clear_error();
                 self.files_panel
                     .file_announced(hash.clone(), name, size, "You".to_string());
                 self.files_panel.file_completed(&hash);
@@ -312,6 +313,7 @@ impl App {
             AppMessage::FileShareCancelled => AppAction::None,
             AppMessage::FileShareFailed(error) => {
                 tracing::error!(error = %error, "file sharing failed");
+                self.files_panel.set_error(format!("Share failed: {error}"));
                 AppAction::None
             }
             AppMessage::FileDownloadComplete(hash) => {

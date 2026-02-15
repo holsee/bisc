@@ -60,6 +60,8 @@ pub enum Action {
 pub struct FilesPanel {
     /// Known shared files.
     pub files: Vec<SharedFile>,
+    /// Error message (e.g. file store not initialized).
+    pub error: Option<String>,
 }
 
 impl FilesPanel {
@@ -118,6 +120,16 @@ impl FilesPanel {
                 file.available_from.push(peer_id);
             }
         }
+    }
+
+    /// Set an error message to display in the panel.
+    pub fn set_error(&mut self, error: String) {
+        self.error = Some(error);
+    }
+
+    /// Clear any displayed error.
+    pub fn clear_error(&mut self) {
+        self.error = None;
     }
 
     /// Handle a message and return any external action.
@@ -184,9 +196,17 @@ impl FilesPanel {
             file_list = file_list.push(text("No files shared yet").size(12));
         }
 
-        let content = column![title, share_btn, scrollable(file_list).height(Length::Fill)]
-            .spacing(10)
-            .padding(10);
+        let mut content = column![title, share_btn].spacing(10).padding(10);
+
+        if let Some(ref err) = self.error {
+            content = content.push(
+                text(err)
+                    .size(12)
+                    .color(iced::Color::from_rgb(1.0, 0.3, 0.3)),
+            );
+        }
+
+        let content = content.push(scrollable(file_list).height(Length::Fill));
 
         container(content)
             .width(Length::Fill)

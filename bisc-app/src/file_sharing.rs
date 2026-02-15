@@ -19,15 +19,25 @@ pub struct FileSharingState {
     store: Option<Arc<FileStore>>,
     /// Storage directory path.
     storage_dir: PathBuf,
+    /// Error from last init attempt (surfaced to UI).
+    init_error: Option<String>,
 }
 
 impl FileSharingState {
     /// Create a new file sharing state with the given storage directory.
+    ///
+    /// Eagerly initializes the metadata store. If initialization fails,
+    /// the error is stored and can be retrieved via `init_error()`.
     pub fn new(storage_dir: PathBuf) -> Self {
-        Self {
+        let mut state = Self {
             store: None,
             storage_dir,
+            init_error: None,
+        };
+        if let Err(e) = state.init() {
+            tracing::error!(error = %e, "failed to eagerly initialize file store");
         }
+        state
     }
 
     /// Initialize the metadata store (creates database if needed).
@@ -36,16 +46,52 @@ impl FileSharingState {
             return Ok(());
         }
 
-        let store =
-            FileStore::new(self.storage_dir.clone()).context("failed to initialize file store")?;
-        self.store = Some(Arc::new(store));
-        tracing::info!(storage_dir = %self.storage_dir.display(), "file sharing initialized");
-        Ok(())
+        match FileStore::new(self.storage_dir.clone()) {
+            Ok(store) => {
+                self.store = Some(Arc::new(store));
+                self.init_error = None;
+                tracing::info!(storage_dir = %self.storage_dir.display(), "file sharing initialized");
+                Ok(())
+            }
+            Err(e) => {
+                let msg = format!("failed to initialize file store: {e}");
+                self.init_error = Some(msg.clone());
+                Err(anyhow::anyhow!(msg))
+            }
+        }
     }
 
     /// Get the metadata store (if initialized).
     pub fn store(&self) -> Option<&Arc<FileStore>> {
         self.store.as_ref()
+    }
+
+    /// Get the error from the last init attempt, if any.
+    pub fn init_error(&self) -> Option<&str> {
+        self.init_error.as_deref()
+    }
+
+    /// Update the storage directory and re-initialize the store.
+    ///
+    /// Returns Ok if the new directory is valid and the store was re-initialized.
+    /// If validation fails, the existing store is preserved.
+    pub fn update_storage_dir(&mut self, new_dir: PathBuf) -> Result<()> {
+        bisc_files::store::validate_storage_dir(&new_dir)?;
+
+        // Only update after validation passes
+        let old_store = self.store.take();
+        let old_dir = std::mem::replace(&mut self.storage_dir, new_dir);
+        self.init_error = None;
+
+        match self.init() {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                // Restore previous state on failure
+                self.store = old_store;
+                self.storage_dir = old_dir;
+                Err(e)
+            }
+        }
     }
 
     /// Add a file to the blob store and register metadata.
@@ -227,17 +273,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn file_sharing_state_starts_uninitialised() {
-        let state = FileSharingState::new(PathBuf::from("/tmp/test-bisc-files"));
-        assert!(state.store.is_none());
+    fn eager_init_creates_store_for_valid_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = FileSharingState::new(dir.path().to_path_buf());
+        assert!(state.store.is_some());
+        assert!(state.init_error().is_none());
     }
 
     #[test]
-    fn init_creates_store() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut state = FileSharingState::new(dir.path().to_path_buf());
-        state.init().unwrap();
-        assert!(state.store.is_some());
+    fn eager_init_stores_error_for_invalid_dir() {
+        let state = FileSharingState::new(PathBuf::from("/proc/bisc_invalid_store"));
+        assert!(state.store.is_none());
+        assert!(state.init_error().is_some());
     }
 
     #[test]
@@ -246,6 +293,30 @@ mod tests {
         let mut state = FileSharingState::new(dir.path().to_path_buf());
         state.init().unwrap();
         state.init().unwrap();
+        assert!(state.store.is_some());
+    }
+
+    #[test]
+    fn update_storage_dir_reinitializes() {
+        let dir1 = tempfile::tempdir().unwrap();
+        let dir2 = tempfile::tempdir().unwrap();
+        let mut state = FileSharingState::new(dir1.path().to_path_buf());
+        assert!(state.store.is_some());
+
+        state.update_storage_dir(dir2.path().to_path_buf()).unwrap();
+        assert!(state.store.is_some());
+        assert!(state.init_error().is_none());
+    }
+
+    #[test]
+    fn update_storage_dir_fails_for_unwritable() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut state = FileSharingState::new(dir.path().to_path_buf());
+        assert!(state.store.is_some());
+
+        let result = state.update_storage_dir(PathBuf::from("/proc/bisc_bad_dir"));
+        assert!(result.is_err());
+        // Store remains from previous valid init
         assert!(state.store.is_some());
     }
 

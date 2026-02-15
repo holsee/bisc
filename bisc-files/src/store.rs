@@ -43,6 +43,16 @@ impl FileStore {
         )
         .context("failed to initialize database schema")?;
 
+        // Validate the directory is writable by creating and removing a temp file.
+        let test_path = storage_dir.join(".bisc_write_test");
+        std::fs::write(&test_path, b"test").with_context(|| {
+            format!(
+                "storage directory is not writable: {}",
+                storage_dir.display()
+            )
+        })?;
+        let _ = std::fs::remove_file(&test_path);
+
         tracing::info!(storage_dir = %storage_dir.display(), "file store opened");
 
         Ok(Self {
@@ -63,7 +73,13 @@ impl FileStore {
                 manifest.file_size as i64,
             ],
         )
-        .context("failed to insert file")?;
+        .with_context(|| {
+            format!(
+                "failed to insert file '{}' into store at {}",
+                manifest.file_name,
+                self.storage_dir.display()
+            )
+        })?;
 
         tracing::info!(
             file_hash = data_encoding::HEXLOWER.encode(&manifest.file_hash),
@@ -164,6 +180,22 @@ impl FileStore {
     }
 }
 
+/// Validate that a storage directory can be used for file storage.
+///
+/// Checks that the directory exists (or can be created) and is writable.
+/// Returns `Ok(())` if valid, or an error describing why it's not usable.
+pub fn validate_storage_dir(path: &std::path::Path) -> Result<()> {
+    std::fs::create_dir_all(path)
+        .with_context(|| format!("cannot create storage directory: {}", path.display()))?;
+
+    let test_path = path.join(".bisc_write_test");
+    std::fs::write(&test_path, b"test")
+        .with_context(|| format!("storage directory is not writable: {}", path.display()))?;
+    let _ = std::fs::remove_file(&test_path);
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -239,6 +271,38 @@ mod tests {
         assert!(files.contains(&m1));
         assert!(files.contains(&m2));
         assert!(files.contains(&m3));
+    }
+
+    #[test]
+    fn validate_storage_dir_succeeds_for_writable_dir() {
+        let tmp = TempDir::new().unwrap();
+        assert!(validate_storage_dir(tmp.path()).is_ok());
+    }
+
+    #[test]
+    fn validate_storage_dir_creates_missing_dir() {
+        let tmp = TempDir::new().unwrap();
+        let nested = tmp.path().join("a").join("b").join("c");
+        assert!(validate_storage_dir(&nested).is_ok());
+        assert!(nested.exists());
+    }
+
+    #[test]
+    fn validate_storage_dir_fails_for_unwritable_path() {
+        // /proc is read-only on Linux
+        let result = validate_storage_dir(std::path::Path::new("/proc/bisc_test_dir"));
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("cannot create storage directory") || err_msg.contains("not writable"),
+            "unexpected error: {err_msg}"
+        );
+    }
+
+    #[test]
+    fn new_fails_for_unwritable_storage_dir() {
+        let result = FileStore::new(PathBuf::from("/proc/bisc_test_store"));
+        assert!(result.is_err());
     }
 
     #[test]
