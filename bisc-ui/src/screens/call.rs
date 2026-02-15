@@ -2,8 +2,13 @@
 //!
 //! The main screen shown during an active call.
 
-use iced::widget::{button, column, container, row, scrollable, text};
+use std::collections::HashMap;
+
+use iced::widget::{button, column, container, row, scrollable, shader, text};
 use iced::{Alignment, Element, Length, Renderer, Theme};
+
+use crate::video_grid;
+use crate::video_surface::VideoSurface;
 
 /// Peer state shown in the sidebar.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -85,6 +90,10 @@ pub struct CallScreen {
     pub ticket: String,
     /// Our display name.
     pub display_name: String,
+    /// Video surfaces for remote peers (keyed by peer hex ID).
+    video_surfaces: HashMap<String, VideoSurface>,
+    /// Local camera preview surface.
+    local_surface: VideoSurface,
 }
 
 impl CallScreen {
@@ -95,6 +104,8 @@ impl CallScreen {
             local_media: LocalMediaState::default(),
             ticket,
             display_name,
+            video_surfaces: HashMap::new(),
+            local_surface: VideoSurface::new(),
         }
     }
 
@@ -127,6 +138,103 @@ impl CallScreen {
             peer.camera_enabled = camera;
             peer.screen_sharing = screen_sharing;
         }
+    }
+
+    /// Update a remote peer's video frame.
+    pub fn update_video_frame(&mut self, peer_id: &str, width: u32, height: u32, rgba_data: &[u8]) {
+        let surface = self
+            .video_surfaces
+            .entry(peer_id.to_string())
+            .or_default();
+        surface.update_frame(width, height, rgba_data);
+    }
+
+    /// Update the local camera preview frame.
+    pub fn update_local_preview(&mut self, width: u32, height: u32, rgba_data: &[u8]) {
+        self.local_surface.update_frame(width, height, rgba_data);
+    }
+
+    /// Remove a peer's video surface.
+    pub fn clear_video_frame(&mut self, peer_id: &str) {
+        self.video_surfaces.remove(peer_id);
+    }
+
+    /// Clear the local camera preview.
+    pub fn clear_local_preview(&mut self) {
+        self.local_surface = VideoSurface::new();
+    }
+
+    /// Build the video area: a grid of VideoSurface widgets for active streams,
+    /// or a placeholder if no video is active.
+    fn build_video_area(&self) -> Element<'_, Message, Theme, Renderer> {
+        // Collect surfaces with active frames: local preview + remote peers
+        let has_local = self.local_media.camera_enabled && self.local_surface.has_frame();
+        let remote_count = self.video_surfaces.len();
+        let total = remote_count + if has_local { 1 } else { 0 };
+
+        if total == 0 {
+            // No video streams active — show placeholder
+            let active_cameras = self.peers.iter().filter(|p| p.camera_enabled).count();
+            let status = if active_cameras > 0 {
+                format!("{active_cameras} peer(s) with camera enabled")
+            } else {
+                format!("{} peer(s) connected", self.peers.len())
+            };
+            return container(text(status).size(16))
+                .center_x(Length::Fill)
+                .center_y(Length::Fill)
+                .into();
+        }
+
+        // Build grid using rows and columns
+        let (cols, _rows) = video_grid::grid_dims(total);
+        let cols = cols.max(1);
+
+        // Collect all surfaces: local first, then remotes
+        let mut surface_elements: Vec<Element<'_, Message, Theme, Renderer>> =
+            Vec::with_capacity(total);
+
+        if has_local {
+            surface_elements.push(
+                container(
+                    shader(&self.local_surface)
+                        .width(Length::Fill)
+                        .height(Length::Fill),
+                )
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into(),
+            );
+        }
+
+        for surface in self.video_surfaces.values() {
+            surface_elements.push(
+                container(shader(surface).width(Length::Fill).height(Length::Fill))
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .into(),
+            );
+        }
+
+        // Arrange into rows of `cols` elements
+        let mut grid = column![].spacing(2);
+        for chunk in surface_elements.chunks_mut(cols) {
+            let mut r = row![].spacing(2).height(Length::Fill);
+            for el in chunk.iter_mut() {
+                // Take the element out, replacing with a placeholder
+                let taken = std::mem::replace(
+                    el,
+                    container(text(""))
+                        .width(Length::Fill)
+                        .height(Length::Fill)
+                        .into(),
+                );
+                r = r.push(taken);
+            }
+            grid = grid.push(r);
+        }
+
+        grid.width(Length::Fill).height(Length::Fill).into()
     }
 
     /// Handle a message and return any external action.
@@ -185,11 +293,8 @@ impl CallScreen {
         .width(Length::Fixed(180.0))
         .height(Length::Fill);
 
-        // Video area placeholder (grid would be rendered here with actual frames)
-        let video_area =
-            container(text(format!("Video Grid — {} peer(s)", self.peers.len())).size(20))
-                .center_x(Length::Fill)
-                .center_y(Length::Fill);
+        // Video area: render VideoSurface widgets in a grid layout
+        let video_area = self.build_video_area();
 
         // Control bar
         let mic_label = if self.local_media.mic_enabled {

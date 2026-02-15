@@ -7,6 +7,8 @@ license.workspace = true
 [features]
 default = []
 audio = ["bisc-media/audio"]
+video = ["bisc-media/video"]
+video-codec = ["bisc-media/video-codec"]
 
 [[bin]]
 name = "bisc"

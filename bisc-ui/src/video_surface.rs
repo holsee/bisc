@@ -90,7 +90,7 @@ struct FrameData {
 ///
 /// Call [`update_frame`](VideoSurface::update_frame) to provide new RGBA frame
 /// data, then place the widget in your Iced view via [`view`](VideoSurface::view).
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct VideoSurface {
     frame: Option<FrameData>,
 }
@@ -99,6 +99,11 @@ impl VideoSurface {
     /// Create a new video surface with no frame.
     pub fn new() -> Self {
         Self { frame: None }
+    }
+
+    /// Whether this surface has frame data to render.
+    pub fn has_frame(&self) -> bool {
+        self.frame.is_some()
     }
 
     /// Upload a new RGBA frame to be rendered.

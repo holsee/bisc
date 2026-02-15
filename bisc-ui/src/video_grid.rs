@@ -6,7 +6,7 @@
 use iced::{Rectangle, Size};
 
 /// Compute grid dimensions (columns, rows) for a given peer count.
-fn grid_dims(count: usize) -> (usize, usize) {
+pub fn grid_dims(count: usize) -> (usize, usize) {
     match count {
         0 => (0, 0),
         1 => (1, 1),

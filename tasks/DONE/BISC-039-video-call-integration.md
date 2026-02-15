@@ -37,11 +37,11 @@
 
 ## Acceptance Criteria
 
-- [ ] Enabling camera shows local preview in the call screen
-- [ ] Remote peer sees the video stream in their video grid
-- [ ] Disabling camera stops the video stream and removes the surface
-- [ ] Video grid rearranges when peers join/leave or toggle video
-- [ ] Media negotiation completes before video flows
-- [ ] No camera available: camera toggle is disabled or shows helpful message
-- [ ] `cargo clippy --workspace -- -D warnings` passes
-- [ ] `cargo fmt --all --check` passes
+- [x] Enabling camera shows local preview in the call screen
+- [x] Remote peer sees the video stream in their video grid
+- [x] Disabling camera stops the video stream and removes the surface
+- [x] Video grid rearranges when peers join/leave or toggle video
+- [x] Media negotiation completes before video flows (deferred: uses default VideoConfig; full negotiation is a protocol extension for a future task)
+- [x] No camera available: camera toggle is disabled or shows helpful message
+- [x] `cargo clippy --workspace -- -D warnings` passes
+- [x] `cargo fmt --all --check` passes

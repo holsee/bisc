@@ -61,6 +61,8 @@ pub enum AppMessage {
         name: String,
         size: u64,
     },
+    /// Periodic tick to sync video frames from pipelines to the UI.
+    VideoFrameTick,
 }
 
 /// Top-level application state.
@@ -260,6 +262,8 @@ impl App {
                 self.files_panel.file_announced(hash, name, size, sender_id);
                 AppAction::None
             }
+            // VideoFrameTick is handled directly by BiscApp before reaching here.
+            AppMessage::VideoFrameTick => AppAction::None,
         }
     }
 }

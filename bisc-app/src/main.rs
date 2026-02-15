@@ -1,10 +1,13 @@
 mod app;
 pub mod settings;
+mod video;
 mod voice;
 
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use app::{AppAction, AppMessage, Screen};
+use bisc_media::video_types::RawFrame;
 use bisc_net::{BiscEndpoint, Channel, ChannelEvent, GossipHandle};
 use bisc_protocol::channel::ChannelMessage;
 use bisc_protocol::ticket::BiscTicket;
@@ -13,6 +16,7 @@ use iced::futures::Stream;
 use iroh::protocol::Router;
 use settings::Settings;
 use tokio::sync::mpsc;
+use video::VideoState;
 use voice::VoiceState;
 
 use iced::{Element, Subscription};
@@ -175,6 +179,38 @@ async fn start_peer_voice(
     Ok(())
 }
 
+/// Start a video pipeline for a newly connected peer.
+async fn start_peer_video(
+    video: &Arc<tokio::sync::Mutex<VideoState>>,
+    net: &Arc<Mutex<Option<Net>>>,
+    peer_hex_id: &str,
+) -> anyhow::Result<()> {
+    let endpoint_id =
+        EndpointId::from_hex(peer_hex_id).ok_or_else(|| anyhow::anyhow!("invalid peer hex id"))?;
+
+    let connection = {
+        let guard = net.lock().unwrap();
+        let n = guard
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("net not initialized"))?;
+        let channel = n
+            .channel
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("no active channel"))?;
+        channel
+            .peer_quic_connection(&endpoint_id)
+            .ok_or_else(|| anyhow::anyhow!("no connection to peer"))?
+    };
+
+    video
+        .lock()
+        .await
+        .add_peer(peer_hex_id.to_string(), connection)
+        .await?;
+
+    Ok(())
+}
+
 /// Top-level Iced application wrapper.
 ///
 /// Bridges the `App` state machine to the Iced runtime by converting
@@ -187,17 +223,29 @@ struct BiscApp {
     channel_event_rx: Arc<Mutex<Option<mpsc::UnboundedReceiver<ChannelEvent>>>>,
     /// Voice call state: audio devices, pipelines, mixing.
     voice: Arc<tokio::sync::Mutex<VoiceState>>,
+    /// Video call state: camera, pipelines, frame delivery.
+    video: Arc<tokio::sync::Mutex<VideoState>>,
+    /// Shared peer video frame buffers (read by UI, written by video pipelines).
+    peer_frames: Arc<Mutex<HashMap<String, RawFrame>>>,
+    /// Shared local camera preview frame (read by UI, written by camera task).
+    local_frame: Arc<Mutex<Option<RawFrame>>>,
 }
 
 impl Default for BiscApp {
     fn default() -> Self {
         let settings = Settings::load();
+        let video_state = VideoState::new();
+        let peer_frames = video_state.peer_frames().clone();
+        let local_frame = video_state.local_frame().clone();
         Self {
             app: app::App::default(),
             settings,
             net: Arc::new(Mutex::new(None)),
             channel_event_rx: Arc::new(Mutex::new(None)),
             voice: Arc::new(tokio::sync::Mutex::new(VoiceState::new())),
+            video: Arc::new(tokio::sync::Mutex::new(video_state)),
+            peer_frames,
+            local_frame,
         }
     }
 }
@@ -214,8 +262,9 @@ impl BiscApp {
                 });
             }
             AppMessage::PeerConnected(hex_id) => {
-                // Start a voice pipeline for the newly connected peer
+                // Start voice and video pipelines for the newly connected peer
                 let voice = Arc::clone(&self.voice);
+                let video = Arc::clone(&self.video);
                 let net = Arc::clone(&self.net);
                 let peer_id = hex_id.clone();
                 tokio::spawn(async move {
@@ -226,15 +275,64 @@ impl BiscApp {
                             "failed to start voice pipeline for peer"
                         );
                     }
+                    if let Err(e) = start_peer_video(&video, &net, &peer_id).await {
+                        tracing::warn!(
+                            peer_id = %peer_id,
+                            error = %e,
+                            "failed to start video pipeline for peer"
+                        );
+                    }
                 });
             }
             AppMessage::PeerLeft(hex_id) => {
-                // Stop the voice pipeline for the departing peer
+                // Stop voice and video pipelines for the departing peer
                 let voice = Arc::clone(&self.voice);
+                let video = Arc::clone(&self.video);
                 let peer_id = hex_id.clone();
                 tokio::spawn(async move {
                     voice.lock().await.remove_peer(&peer_id).await;
+                    video.lock().await.remove_peer(&peer_id).await;
                 });
+            }
+            AppMessage::VideoFrameTick => {
+                // Sync video frames from pipelines to the call screen for rendering.
+                if let Some(call) = &mut self.app.call_screen {
+                    // Sync remote peer frames
+                    if let Ok(frames) = self.peer_frames.lock() {
+                        for (peer_id, frame) in frames.iter() {
+                            if frame.format == bisc_media::video_types::PixelFormat::Rgba {
+                                call.update_video_frame(
+                                    peer_id,
+                                    frame.width,
+                                    frame.height,
+                                    &frame.data,
+                                );
+                            }
+                        }
+                        // Remove surfaces for peers that no longer have frames
+                        let active_ids: Vec<String> = frames.keys().cloned().collect();
+                        let stale: Vec<String> = call
+                            .peers
+                            .iter()
+                            .filter(|p| !active_ids.contains(&p.id))
+                            .map(|p| p.id.clone())
+                            .collect();
+                        for id in stale {
+                            call.clear_video_frame(&id);
+                        }
+                    }
+                    // Sync local camera preview
+                    if let Ok(local) = self.local_frame.lock() {
+                        if let Some(frame) = local.as_ref() {
+                            if frame.format == bisc_media::video_types::PixelFormat::Rgba {
+                                call.update_local_preview(frame.width, frame.height, &frame.data);
+                            }
+                        } else {
+                            call.clear_local_preview();
+                        }
+                    }
+                }
+                return iced::Task::none();
             }
             _ => {}
         }
@@ -308,10 +406,12 @@ impl BiscApp {
             }
             AppAction::SetMic(on) => {
                 let voice = Arc::clone(&self.voice);
+                let video = Arc::clone(&self.video);
                 let net = Arc::clone(&self.net);
                 tokio::spawn(async move {
                     voice.lock().await.set_muted(!on);
                     // Broadcast media state change via gossip
+                    let video_on = video.lock().await.is_camera_on();
                     let our_id = {
                         let guard = net.lock().unwrap();
                         guard
@@ -325,7 +425,45 @@ impl BiscApp {
                                 channel.broadcast_message(ChannelMessage::MediaStateUpdate {
                                     endpoint_id,
                                     audio_muted: !on,
-                                    video_enabled: false,
+                                    video_enabled: video_on,
+                                    screen_sharing: false,
+                                    app_audio_sharing: false,
+                                });
+                            }
+                        }
+                    }
+                });
+                iced::Task::none()
+            }
+            AppAction::SetCamera(on) => {
+                let video = Arc::clone(&self.video);
+                let voice = Arc::clone(&self.voice);
+                let net = Arc::clone(&self.net);
+                tokio::spawn(async move {
+                    {
+                        let mut v = video.lock().await;
+                        if on {
+                            v.start_camera();
+                        } else {
+                            v.stop_camera();
+                        }
+                    }
+                    // Broadcast media state change via gossip
+                    let audio_muted = voice.lock().await.is_muted();
+                    let our_id = {
+                        let guard = net.lock().unwrap();
+                        guard
+                            .as_ref()
+                            .and_then(|n| n.channel.as_ref().map(|c| c.our_endpoint_id()))
+                    };
+                    if let Some(endpoint_id) = our_id {
+                        let guard = net.lock().unwrap();
+                        if let Some(ref n) = *guard {
+                            if let Some(ref channel) = n.channel {
+                                channel.broadcast_message(ChannelMessage::MediaStateUpdate {
+                                    endpoint_id,
+                                    audio_muted,
+                                    video_enabled: on,
                                     screen_sharing: false,
                                     app_audio_sharing: false,
                                 });
@@ -336,10 +474,12 @@ impl BiscApp {
                 iced::Task::none()
             }
             AppAction::LeaveChannel => {
-                // Stop all voice pipelines
+                // Stop all voice and video pipelines
                 let voice = Arc::clone(&self.voice);
+                let video = Arc::clone(&self.video);
                 tokio::spawn(async move {
                     voice.lock().await.shutdown().await;
+                    video.lock().await.shutdown().await;
                 });
                 // Drop the event receiver (ends the subscription)
                 *self.channel_event_rx.lock().unwrap() = None;
@@ -388,10 +528,20 @@ impl BiscApp {
     }
 
     fn subscription(&self) -> Subscription<AppMessage> {
-        Subscription::run_with(
+        let channel_events = Subscription::run_with(
             ChannelEventRxSlot(Arc::clone(&self.channel_event_rx)),
             channel_event_stream,
-        )
+        );
+
+        // Poll video frames at ~30fps when in a call with video active.
+        let video_tick = if self.app.screen == Screen::Call {
+            iced::time::every(std::time::Duration::from_millis(33))
+                .map(|_| AppMessage::VideoFrameTick)
+        } else {
+            Subscription::none()
+        };
+
+        Subscription::batch([channel_events, video_tick])
     }
 }
 
