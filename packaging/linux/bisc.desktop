@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=bisc
+Comment=Decentralized voice/video calls, screen sharing, and file sharing
+Exec=bisc
+Icon=bisc
+Categories=Network;InstantMessaging;AudioVideo;
+Terminal=false
+StartupNotify=true

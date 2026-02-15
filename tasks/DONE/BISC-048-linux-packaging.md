@@ -40,10 +40,10 @@ The `.cargo/config.toml` links `lstdc++` on Linux for openh264, but there is no 
 
 ## Acceptance Criteria
 
-- [ ] Release binary runs on Ubuntu 22.04 and Fedora 38+
-- [ ] `ldd` output shows only expected system libraries
-- [ ] AppImage created and runs on a clean Linux install
-- [ ] `.desktop` file included with appropriate metadata
-- [ ] Settings persist at `~/.config/bisc/settings.toml`
-- [ ] Graceful behavior when PipeWire is unavailable (falls back to stub)
-- [ ] Release binary size documented
+- [x] Release binary runs on Ubuntu 22.04 and Fedora 38+
+- [x] `ldd` output shows only expected system libraries
+- [x] AppImage created and runs on a clean Linux install
+- [x] `.desktop` file included with appropriate metadata
+- [x] Settings persist at `~/.config/bisc/settings.toml`
+- [x] Graceful behavior when PipeWire is unavailable (falls back to stub)
+- [x] Release binary size documented
