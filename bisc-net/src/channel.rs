@@ -67,7 +67,7 @@ pub struct Channel {
     display_name: String,
     peers: Arc<RwLock<HashMap<EndpointId, PeerInfo>>>,
     connections: Arc<RwLock<HashMap<EndpointId, Arc<PeerConnection>>>>,
-    event_rx: mpsc::UnboundedReceiver<ChannelEvent>,
+    event_rx: Option<mpsc::UnboundedReceiver<ChannelEvent>>,
     shutdown_tx: watch::Sender<bool>,
     endpoint: iroh::Endpoint,
 }
@@ -219,9 +219,23 @@ impl Channel {
         peers
     }
 
+    /// Take the event receiver out of the channel.
+    ///
+    /// Returns `None` if the receiver has already been taken. Once taken,
+    /// `recv_event()` will pend forever — the caller owns the receiver.
+    pub fn take_event_receiver(&mut self) -> Option<mpsc::UnboundedReceiver<ChannelEvent>> {
+        self.event_rx.take()
+    }
+
     /// Receive the next channel event.
+    ///
+    /// Returns `None` (pends forever) if the receiver was already taken
+    /// via `take_event_receiver()`.
     pub async fn recv_event(&mut self) -> Option<ChannelEvent> {
-        self.event_rx.recv().await
+        match &mut self.event_rx {
+            Some(rx) => rx.recv().await,
+            None => std::future::pending().await,
+        }
     }
 
     /// Get a direct connection to a specific peer, if established.
@@ -302,7 +316,7 @@ impl Channel {
             display_name,
             peers,
             connections,
-            event_rx,
+            event_rx: Some(event_rx),
             shutdown_tx,
             endpoint,
         }

@@ -7,6 +7,13 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct EndpointId(pub [u8; 32]);
 
+impl EndpointId {
+    /// Encode the endpoint ID as a lowercase hex string.
+    pub fn to_hex(&self) -> String {
+        data_encoding::HEXLOWER.encode(&self.0)
+    }
+}
+
 /// Address information for connecting to an endpoint.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EndpointAddr {

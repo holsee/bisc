@@ -18,7 +18,6 @@ pub enum Screen {
 
 /// Top-level application message.
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // Variants constructed by networking layer (BISC-036)
 pub enum AppMessage {
     /// Messages from the channel screen.
     Channel(channel::Message),
@@ -30,14 +29,38 @@ pub enum AppMessage {
     Settings(settings::Message),
     /// Navigation: go to settings.
     OpenSettings,
-    /// Navigation: go back from settings.
-    CloseSettings,
     /// Channel was successfully created (ticket received).
     ChannelCreated(String),
     /// Successfully joined a channel.
     ChannelJoined,
     /// Error during channel operation.
     ChannelError(String),
+    /// A peer joined the channel (from subscription).
+    PeerJoined {
+        name: String,
+        id: String,
+        mic_enabled: bool,
+        camera_enabled: bool,
+        screen_sharing: bool,
+    },
+    /// A peer left the channel (from subscription).
+    PeerLeft(String),
+    /// A direct connection was established to a peer (from subscription).
+    PeerConnected(String),
+    /// A peer's media state changed (from subscription).
+    MediaStateChanged {
+        peer_id: String,
+        audio_muted: bool,
+        video_enabled: bool,
+        screen_sharing: bool,
+    },
+    /// A file was announced by a peer (from subscription).
+    FileAnnounced {
+        sender_id: String,
+        hash: String,
+        name: String,
+        size: u64,
+    },
 }
 
 /// Top-level application state.
@@ -168,10 +191,6 @@ impl App {
                 self.screen = Screen::Settings;
                 AppAction::None
             }
-            AppMessage::CloseSettings => {
-                self.screen = self.previous_screen.clone();
-                AppAction::None
-            }
             AppMessage::ChannelCreated(ticket) => {
                 self.channel_screen.set_ticket(ticket.clone());
                 self.call_screen = Some(CallScreen::new(
@@ -191,6 +210,54 @@ impl App {
             }
             AppMessage::ChannelError(error) => {
                 self.channel_screen.set_error(error);
+                AppAction::None
+            }
+            AppMessage::PeerJoined {
+                name,
+                id,
+                mic_enabled,
+                camera_enabled,
+                screen_sharing,
+            } => {
+                if let Some(call) = &mut self.call_screen {
+                    call.peer_joined(call::PeerInfo {
+                        name,
+                        id,
+                        mic_enabled,
+                        camera_enabled,
+                        screen_sharing,
+                    });
+                }
+                AppAction::None
+            }
+            AppMessage::PeerLeft(id) => {
+                if let Some(call) = &mut self.call_screen {
+                    call.peer_left(&id);
+                }
+                AppAction::None
+            }
+            AppMessage::PeerConnected(id) => {
+                tracing::info!(peer_id = %id, "peer connected (direct QUIC)");
+                AppAction::None
+            }
+            AppMessage::MediaStateChanged {
+                peer_id,
+                audio_muted,
+                video_enabled,
+                screen_sharing,
+            } => {
+                if let Some(call) = &mut self.call_screen {
+                    call.update_peer_media(&peer_id, !audio_muted, video_enabled, screen_sharing);
+                }
+                AppAction::None
+            }
+            AppMessage::FileAnnounced {
+                sender_id,
+                hash,
+                name,
+                size,
+            } => {
+                self.files_panel.file_announced(hash, name, size, sender_id);
                 AppAction::None
             }
         }
@@ -287,5 +354,162 @@ mod tests {
 
         let action = app.update(AppMessage::Call(call::Message::ToggleMic));
         assert_eq!(action, AppAction::SetMic(false));
+    }
+
+    // --- Channel event subscription flow tests ---
+
+    /// Helper: create an app with an active call screen.
+    fn app_in_call() -> App {
+        let mut app = App::default();
+        app.update(AppMessage::ChannelCreated("ticket".to_string()));
+        assert_eq!(app.screen, Screen::Call);
+        app
+    }
+
+    #[test]
+    fn peer_joined_adds_to_call_screen() {
+        let mut app = app_in_call();
+        app.update(AppMessage::PeerJoined {
+            name: "Bob".to_string(),
+            id: "abcd1234".to_string(),
+            mic_enabled: true,
+            camera_enabled: false,
+            screen_sharing: false,
+        });
+
+        let call = app.call_screen.as_ref().unwrap();
+        assert_eq!(call.peers.len(), 1);
+        assert_eq!(call.peers[0].name, "Bob");
+        assert_eq!(call.peers[0].id, "abcd1234");
+        assert!(call.peers[0].mic_enabled);
+        assert!(!call.peers[0].camera_enabled);
+    }
+
+    #[test]
+    fn peer_left_removes_from_call_screen() {
+        let mut app = app_in_call();
+        app.update(AppMessage::PeerJoined {
+            name: "Bob".to_string(),
+            id: "abcd1234".to_string(),
+            mic_enabled: true,
+            camera_enabled: false,
+            screen_sharing: false,
+        });
+        assert_eq!(app.call_screen.as_ref().unwrap().peers.len(), 1);
+
+        app.update(AppMessage::PeerLeft("abcd1234".to_string()));
+        assert!(app.call_screen.as_ref().unwrap().peers.is_empty());
+    }
+
+    #[test]
+    fn media_state_changed_updates_peer() {
+        let mut app = app_in_call();
+        app.update(AppMessage::PeerJoined {
+            name: "Bob".to_string(),
+            id: "abcd1234".to_string(),
+            mic_enabled: true,
+            camera_enabled: false,
+            screen_sharing: false,
+        });
+
+        app.update(AppMessage::MediaStateChanged {
+            peer_id: "abcd1234".to_string(),
+            audio_muted: true,
+            video_enabled: true,
+            screen_sharing: true,
+        });
+
+        let peer = &app.call_screen.as_ref().unwrap().peers[0];
+        assert!(!peer.mic_enabled); // audio_muted=true → mic_enabled=false
+        assert!(peer.camera_enabled);
+        assert!(peer.screen_sharing);
+    }
+
+    #[test]
+    fn file_announced_adds_to_files_panel() {
+        let mut app = app_in_call();
+        app.update(AppMessage::FileAnnounced {
+            sender_id: "sender1".to_string(),
+            hash: "abc123".to_string(),
+            name: "document.pdf".to_string(),
+            size: 4096,
+        });
+
+        assert_eq!(app.files_panel.files.len(), 1);
+        assert_eq!(app.files_panel.files[0].name, "document.pdf");
+        assert_eq!(app.files_panel.files[0].size, 4096);
+        assert_eq!(app.files_panel.files[0].sender, "sender1");
+    }
+
+    #[test]
+    fn peer_events_ignored_without_call_screen() {
+        let mut app = App::default();
+        // No call screen — events should be silently handled (not panic)
+        app.update(AppMessage::PeerJoined {
+            name: "Bob".to_string(),
+            id: "abcd1234".to_string(),
+            mic_enabled: true,
+            camera_enabled: false,
+            screen_sharing: false,
+        });
+        app.update(AppMessage::PeerLeft("abcd1234".to_string()));
+        app.update(AppMessage::MediaStateChanged {
+            peer_id: "abcd1234".to_string(),
+            audio_muted: false,
+            video_enabled: false,
+            screen_sharing: false,
+        });
+        // Files panel always exists, so file announcements still work
+        app.update(AppMessage::FileAnnounced {
+            sender_id: "sender1".to_string(),
+            hash: "abc".to_string(),
+            name: "test.txt".to_string(),
+            size: 100,
+        });
+        assert_eq!(app.files_panel.files.len(), 1);
+    }
+
+    #[test]
+    fn all_channel_event_variants_map_to_ui_update() {
+        let mut app = app_in_call();
+
+        // PeerJoined → adds peer
+        app.update(AppMessage::PeerJoined {
+            name: "Alice".to_string(),
+            id: "a1".to_string(),
+            mic_enabled: true,
+            camera_enabled: true,
+            screen_sharing: false,
+        });
+        assert_eq!(app.call_screen.as_ref().unwrap().peers.len(), 1);
+
+        // PeerConnected → logged (no state change expected)
+        let action = app.update(AppMessage::PeerConnected("a1".to_string()));
+        assert_eq!(action, AppAction::None);
+
+        // MediaStateChanged → updates peer
+        app.update(AppMessage::MediaStateChanged {
+            peer_id: "a1".to_string(),
+            audio_muted: true,
+            video_enabled: false,
+            screen_sharing: true,
+        });
+        let peer = &app.call_screen.as_ref().unwrap().peers[0];
+        assert!(!peer.mic_enabled);
+        assert!(!peer.camera_enabled);
+        assert!(peer.screen_sharing);
+
+        // FileAnnounced → adds file
+        app.update(AppMessage::FileAnnounced {
+            sender_id: "a1".to_string(),
+            hash: "hash1".to_string(),
+            name: "file.zip".to_string(),
+            size: 999,
+        });
+        assert_eq!(app.files_panel.files.len(), 1);
+
+        // PeerLeft → removes peer
+        app.update(AppMessage::PeerLeft("a1".to_string()));
+        assert!(app.call_screen.as_ref().unwrap().peers.is_empty());
     }
 }

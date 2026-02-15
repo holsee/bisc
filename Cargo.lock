@@ -456,6 +456,7 @@ dependencies = [
  "bisc-net",
  "bisc-protocol",
  "bisc-ui",
+ "data-encoding",
  "directories",
  "iced",
  "iroh",

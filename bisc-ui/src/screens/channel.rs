@@ -32,6 +32,8 @@ pub struct ChannelScreen {
     pub created_ticket: Option<String>,
     /// Error message to display.
     pub error: Option<String>,
+    /// Whether a create/join operation is in progress.
+    pub connecting: bool,
 }
 
 impl Default for ChannelScreen {
@@ -41,6 +43,7 @@ impl Default for ChannelScreen {
             ticket_input: String::new(),
             created_ticket: None,
             error: None,
+            connecting: false,
         }
     }
 }
@@ -76,9 +79,10 @@ impl ChannelScreen {
         self.error = None;
     }
 
-    /// Set an error message.
+    /// Set an error message (clears connecting state).
     pub fn set_error(&mut self, error: String) {
         self.error = Some(error);
+        self.connecting = false;
     }
 
     /// Handle a message and return any external action to perform.
@@ -99,6 +103,7 @@ impl ChannelScreen {
                     return Action::None;
                 }
                 self.error = None;
+                self.connecting = true;
                 Action::CreateChannel {
                     display_name: self.display_name.clone(),
                 }
@@ -113,6 +118,7 @@ impl ChannelScreen {
                     return Action::None;
                 }
                 self.error = None;
+                self.connecting = true;
                 Action::JoinChannel {
                     ticket: self.ticket_input.clone(),
                     display_name: self.display_name.clone(),
@@ -137,7 +143,10 @@ impl ChannelScreen {
             .padding(10)
             .width(Length::Fixed(300.0));
 
-        let create_btn = button(text("Create Channel")).on_press(Message::CreateChannel);
+        let mut create_btn = button(text("Create Channel"));
+        if !self.connecting {
+            create_btn = create_btn.on_press(Message::CreateChannel);
+        }
 
         let ticket_section: Column<'_, Message, Theme, Renderer> =
             if let Some(ticket) = &self.created_ticket {
@@ -157,9 +166,14 @@ impl ChannelScreen {
             .padding(10)
             .width(Length::Fixed(300.0));
 
-        let join_btn = button(text("Join Channel")).on_press(Message::JoinChannel);
+        let mut join_btn = button(text("Join Channel"));
+        if !self.connecting {
+            join_btn = join_btn.on_press(Message::JoinChannel);
+        }
 
-        let error_display: Element<'_, Message, Theme, Renderer> = if let Some(err) = &self.error {
+        let status_display: Element<'_, Message, Theme, Renderer> = if self.connecting {
+            text("Connecting...").into()
+        } else if let Some(err) = &self.error {
             text(err.as_str()).color([1.0, 0.3, 0.3]).into()
         } else {
             text("").into()
@@ -174,7 +188,7 @@ impl ChannelScreen {
             row![ticket_input, join_btn]
                 .spacing(10)
                 .align_y(Alignment::Center),
-            error_display,
+            status_display,
         ]
         .spacing(15)
         .align_x(Alignment::Center)
@@ -292,5 +306,30 @@ mod tests {
         let mut screen = ChannelScreen::default();
         screen.update(Message::DisplayNameChanged("Charlie".to_string()));
         assert_eq!(screen.display_name, "Charlie");
+    }
+
+    #[test]
+    fn create_sets_connecting() {
+        let mut screen = ChannelScreen::new("Alice".to_string());
+        assert!(!screen.connecting);
+        screen.update(Message::CreateChannel);
+        assert!(screen.connecting);
+    }
+
+    #[test]
+    fn join_sets_connecting() {
+        let mut screen = ChannelScreen::new("Bob".to_string());
+        screen.ticket_input = "ticket".to_string();
+        assert!(!screen.connecting);
+        screen.update(Message::JoinChannel);
+        assert!(screen.connecting);
+    }
+
+    #[test]
+    fn error_clears_connecting() {
+        let mut screen = ChannelScreen::new("Alice".to_string());
+        screen.connecting = true;
+        screen.set_error("connection failed".to_string());
+        assert!(!screen.connecting);
     }
 }

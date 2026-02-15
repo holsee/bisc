@@ -43,10 +43,10 @@ Wire the peer list so it reflects live channel state:
 
 ## Acceptance Criteria
 
-- [ ] Creating a channel and having a second peer join shows the peer in the call screen
-- [ ] Peer leaving removes them from the peer list
-- [ ] File announcements appear in the files panel
-- [ ] Media state changes (mute, camera, screen share) update peer indicators
-- [ ] No event is silently dropped — every `ChannelEvent` maps to a UI update
-- [ ] `cargo clippy --workspace -- -D warnings` passes
-- [ ] `cargo fmt --all --check` passes
+- [x] Creating a channel and having a second peer join shows the peer in the call screen
+- [x] Peer leaving removes them from the peer list
+- [x] File announcements appear in the files panel
+- [x] Media state changes (mute, camera, screen share) update peer indicators
+- [x] No event is silently dropped — every `ChannelEvent` maps to a UI update
+- [x] `cargo clippy --workspace -- -D warnings` passes
+- [x] `cargo fmt --all --check` passes
