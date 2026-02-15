@@ -1100,6 +1100,13 @@ mod tests {
 }
 
 fn main() -> iced::Result {
+    // On Windows, default to DX12 backend to avoid Vulkan driver crashes.
+    // Users can still override via WGPU_BACKEND env var.
+    #[cfg(target_os = "windows")]
+    if std::env::var("WGPU_BACKEND").is_err() {
+        unsafe { std::env::set_var("WGPU_BACKEND", "dx12") };
+    }
+
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
