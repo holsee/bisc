@@ -1,5 +1,7 @@
 # bisc
 
+[![CI](https://github.com/holsee/bisc/actions/workflows/ci.yml/badge.svg)](https://github.com/holsee/bisc/actions/workflows/ci.yml)
+
 A native cross-platform desktop application for voice/video calls with screen sharing and file sharing.
 
 ## Requirements

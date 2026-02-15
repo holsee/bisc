@@ -51,9 +51,9 @@ Verify the binary can be cross-compiled (even if not run):
 
 ## Acceptance Criteria
 
-- [ ] CI workflow exists and runs on push/PR for all three platforms
-- [ ] `cargo build --workspace` succeeds on Windows, macOS, and Linux in CI
-- [ ] `cargo test --workspace` passes on all three platforms (non-hardware tests)
-- [ ] `cargo clippy --workspace -- -D warnings` passes on all three platforms
-- [ ] Build prerequisites documented per platform
-- [ ] CI badge in README showing build status
+- [x] CI workflow exists and runs on push/PR for all three platforms
+- [x] `cargo build --workspace` succeeds on Windows, macOS, and Linux in CI
+- [x] `cargo test --workspace` passes on all three platforms (non-hardware tests)
+- [x] `cargo clippy --workspace -- -D warnings` passes on all three platforms
+- [x] Build prerequisites documented per platform
+- [x] CI badge in README showing build status

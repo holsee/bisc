@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  check:
+    name: ${{ matrix.os }} (${{ matrix.label }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            label: linux
+          - os: windows-latest
+            label: windows
+          - os: macos-latest
+            label: macos
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo registry & build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      # Linux: install system deps needed for all-features build
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libasound2-dev \
+            libclang-dev \
+            cmake \
+            nasm
+
+      - name: Check formatting
+        run: cargo fmt --all --check
+
+      - name: Build (default features)
+        run: cargo build --workspace
+
+      - name: Clippy (default features)
+        run: cargo clippy --workspace -- -D warnings
+
+      - name: Test (default features)
+        run: cargo test --workspace
+
+      # All-features build: only on Linux where we install system deps.
+      # Windows/macOS would need additional platform-specific setup for
+      # cpal, nokhwa, openh264, and scap which is handled in packaging tasks.
+      - name: Build (all features)
+        if: runner.os == 'Linux'
+        run: cargo build --workspace --all-features
+
+      - name: Clippy (all features)
+        if: runner.os == 'Linux'
+        run: cargo clippy --workspace --all-features -- -D warnings
+
+      - name: Test (all features)
+        if: runner.os == 'Linux'
+        run: cargo test --workspace --all-features
