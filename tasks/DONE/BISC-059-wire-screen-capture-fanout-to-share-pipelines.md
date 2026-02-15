@@ -37,12 +37,12 @@ Ensure removing a peer also removes its `frame_in_tx` from the fan-out.
 
 ## Acceptance Criteria
 
-- [ ] `drop(frame_in_tx)` removed from `ScreenShareState::add_peer`
-- [ ] Screen capture frames are distributed to all active share pipeline inputs
-- [ ] Adding/removing pipelines while capture is running works correctly
-- [ ] Starting capture while pipelines exist begins frame delivery
-- [ ] Stopping capture while pipelines exist ends frame delivery cleanly
-- [ ] `cargo build --workspace` compiles
-- [ ] `cargo clippy --workspace -- -D warnings` passes
-- [ ] `cargo test --workspace` passes
-- [ ] Unit test verifies fan-out delivers frames to multiple pipeline inputs
+- [x] `drop(frame_in_tx)` removed from `ScreenShareState::add_peer`
+- [x] Screen capture frames are distributed to all active share pipeline inputs
+- [x] Adding/removing pipelines while capture is running works correctly
+- [x] Starting capture while pipelines exist begins frame delivery
+- [x] Stopping capture while pipelines exist ends frame delivery cleanly
+- [x] `cargo build --workspace` compiles
+- [x] `cargo clippy --workspace -- -D warnings` passes
+- [x] `cargo test --workspace` passes
+- [x] Unit test verifies fan-out delivers frames to multiple pipeline inputs

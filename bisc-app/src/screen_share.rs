@@ -1,10 +1,11 @@
 //! Screen share integration: manages capture, share pipelines, and frame delivery.
 //!
 //! When a user starts sharing their screen, frames flow from the screen capture
-//! through the `SharePipeline` send loop (H.264 encode → fragment → QUIC datagrams).
-//! Incoming screen shares from remote peers flow through the recv loop (reassemble →
-//! decode → frame buffer). Decoded frames are stored in shared state so the
-//! Iced view can render them via `VideoSurface` widgets.
+//! through the fan-out mechanism to all active `SharePipeline` send loops (H.264
+//! encode → fragment → QUIC datagrams). Incoming screen shares from remote peers
+//! flow through the recv loop (reassemble → decode → frame buffer). Decoded frames
+//! are stored in shared state so the Iced view can render them via `VideoSurface`
+//! widgets.
 //!
 //! Requires the `video-codec` feature for H.264 codec support.
 //! Screen capture additionally requires the `screen-capture` feature.
@@ -19,6 +20,10 @@ use tokio::task::JoinHandle;
 #[cfg(feature = "video-codec")]
 use bisc_media::share_pipeline::{ShareConfig, SharePipeline};
 
+/// Shared fan-out registry: maps peer IDs to their pipeline frame input senders.
+/// The screen capture task writes frames here, and pipelines receive them.
+type FrameFanout = Arc<Mutex<HashMap<String, mpsc::UnboundedSender<RawFrame>>>>;
+
 /// Manages screen share state: capture, pipelines, and frame delivery.
 pub struct ScreenShareState {
     /// Whether screen capture is active.
@@ -31,9 +36,8 @@ pub struct ScreenShareState {
     pipelines: HashMap<String, SharePipeline>,
     /// Decoded share frame buffers per peer (written by pipelines, read by UI).
     share_frames: Arc<Mutex<HashMap<String, RawFrame>>>,
-    /// Screen capture frame sender (capture task writes here, pipeline reads).
-    #[allow(dead_code)]
-    capture_tx: Option<mpsc::UnboundedSender<RawFrame>>,
+    /// Fan-out registry: capture task sends frames to all registered pipeline inputs.
+    frame_fanout: FrameFanout,
     /// Screen capture task handle.
     capture_handle: Option<JoinHandle<()>>,
     /// Frame relay task handles (per-peer: pipeline output → shared state).
@@ -49,7 +53,7 @@ impl ScreenShareState {
             #[cfg(feature = "video-codec")]
             pipelines: HashMap::new(),
             share_frames: Arc::new(Mutex::new(HashMap::new())),
-            capture_tx: None,
+            frame_fanout: Arc::new(Mutex::new(HashMap::new())),
             capture_handle: None,
             relay_handles: HashMap::new(),
         }
@@ -68,11 +72,9 @@ impl ScreenShareState {
             return true;
         }
 
-        let (tx, _rx) = mpsc::unbounded_channel();
-        let started = start_screen_capture(&tx);
+        let started = start_screen_capture(&self.frame_fanout);
 
         if started {
-            self.capture_tx = Some(tx);
             self.sharing = true;
             tracing::info!("screen sharing started");
         } else {
@@ -88,7 +90,6 @@ impl ScreenShareState {
             return;
         }
 
-        self.capture_tx = None;
         if let Some(handle) = self.capture_handle.take() {
             handle.abort();
         }
@@ -136,8 +137,12 @@ impl ScreenShareState {
 
         tracing::info!(peer_id = %peer_id, "share pipeline started for peer");
 
-        // TODO: wire screen capture fan-out to pipeline's frame_in_tx
-        drop(frame_in_tx);
+        // Register this pipeline's frame input with the fan-out
+        self.frame_fanout
+            .lock()
+            .unwrap()
+            .insert(peer_id.clone(), frame_in_tx);
+        tracing::debug!(peer_id = %peer_id, "registered pipeline with screen capture fan-out");
 
         // Spawn relay task: pipeline output → shared frame buffer
         let share_frames = Arc::clone(&self.share_frames);
@@ -168,6 +173,9 @@ impl ScreenShareState {
 
     /// Remove and stop the share pipeline for a peer.
     pub async fn remove_peer(&mut self, peer_id: &str) {
+        // Remove from fan-out first
+        self.frame_fanout.lock().unwrap().remove(peer_id);
+
         #[cfg(feature = "video-codec")]
         if let Some(mut pipeline) = self.pipelines.remove(peer_id) {
             pipeline.stop().await;
@@ -184,6 +192,9 @@ impl ScreenShareState {
     /// Shut down all share pipelines and capture.
     pub async fn shutdown(&mut self) {
         self.stop_sharing();
+
+        // Clear the fan-out
+        self.frame_fanout.lock().unwrap().clear();
 
         #[cfg(feature = "video-codec")]
         for (peer_id, mut pipeline) in self.pipelines.drain() {
@@ -217,9 +228,12 @@ async fn share_frame_relay_task(
 
 /// Start screen capture if the `screen-capture` feature is enabled.
 ///
+/// The capture task captures frames and fans out each frame to all registered
+/// pipeline inputs via `frame_fanout`.
+///
 /// Returns true if capture was successfully started.
 #[cfg(feature = "screen-capture")]
-fn start_screen_capture(_capture_tx: &mpsc::UnboundedSender<RawFrame>) -> bool {
+fn start_screen_capture(frame_fanout: &FrameFanout) -> bool {
     use bisc_media::screen_capture;
 
     if !screen_capture::is_supported() {
@@ -251,15 +265,24 @@ fn start_screen_capture(_capture_tx: &mpsc::UnboundedSender<RawFrame>) -> bool {
 
     match screen_capture::capture_display(primary_display.id, 15) {
         Ok(mut stream) => {
-            let tx = _capture_tx.clone();
+            let fanout = Arc::clone(frame_fanout);
             tokio::spawn(async move {
                 loop {
                     match stream.next_frame().await {
                         Some(frame) => {
-                            if tx.send(frame).is_err() {
-                                tracing::debug!("screen capture output channel closed");
-                                break;
-                            }
+                            // Fan out to all registered pipeline inputs
+                            let mut senders = fanout.lock().unwrap();
+                            senders.retain(|peer_id, tx| {
+                                if tx.send(frame.clone()).is_err() {
+                                    tracing::debug!(
+                                        peer_id = %peer_id,
+                                        "share pipeline frame channel closed, removing"
+                                    );
+                                    false
+                                } else {
+                                    true
+                                }
+                            });
                         }
                         None => {
                             tracing::info!("screen capture stream ended");
@@ -279,7 +302,7 @@ fn start_screen_capture(_capture_tx: &mpsc::UnboundedSender<RawFrame>) -> bool {
 
 /// Stub when the `screen-capture` feature is not enabled.
 #[cfg(not(feature = "screen-capture"))]
-fn start_screen_capture(_capture_tx: &mpsc::UnboundedSender<RawFrame>) -> bool {
+fn start_screen_capture(_frame_fanout: &FrameFanout) -> bool {
     tracing::info!("screen-capture feature not enabled, screen sharing disabled");
     false
 }
@@ -347,5 +370,93 @@ mod tests {
             .await
             .expect("relay should end")
             .expect("relay should not panic");
+    }
+
+    #[test]
+    fn fanout_delivers_frames_to_multiple_share_pipelines() {
+        let fanout: FrameFanout = Arc::new(Mutex::new(HashMap::new()));
+
+        let (tx_a, mut rx_a) = mpsc::unbounded_channel();
+        let (tx_b, mut rx_b) = mpsc::unbounded_channel();
+        {
+            let mut senders = fanout.lock().unwrap();
+            senders.insert("peer-a".to_string(), tx_a);
+            senders.insert("peer-b".to_string(), tx_b);
+        }
+
+        let frame = RawFrame {
+            data: vec![42; 64 * 64 * 4],
+            width: 64,
+            height: 64,
+            format: bisc_media::video_types::PixelFormat::Rgba,
+        };
+        {
+            let senders = fanout.lock().unwrap();
+            for (_, tx) in senders.iter() {
+                let _ = tx.send(frame.clone());
+            }
+        }
+
+        let frame_a = rx_a.try_recv().expect("peer-a should receive frame");
+        let frame_b = rx_b.try_recv().expect("peer-b should receive frame");
+        assert_eq!(frame_a.width, 64);
+        assert_eq!(frame_b.width, 64);
+    }
+
+    #[test]
+    fn fanout_handles_dynamic_add_remove() {
+        let fanout: FrameFanout = Arc::new(Mutex::new(HashMap::new()));
+
+        let (tx_a, mut rx_a) = mpsc::unbounded_channel();
+        fanout.lock().unwrap().insert("peer-a".to_string(), tx_a);
+
+        let frame1 = RawFrame {
+            data: vec![1; 4],
+            width: 1,
+            height: 1,
+            format: bisc_media::video_types::PixelFormat::Rgba,
+        };
+        {
+            let senders = fanout.lock().unwrap();
+            for (_, tx) in senders.iter() {
+                let _ = tx.send(frame1.clone());
+            }
+        }
+        assert!(rx_a.try_recv().is_ok());
+
+        let (tx_b, mut rx_b) = mpsc::unbounded_channel();
+        fanout.lock().unwrap().insert("peer-b".to_string(), tx_b);
+
+        let frame2 = RawFrame {
+            data: vec![2; 4],
+            width: 1,
+            height: 1,
+            format: bisc_media::video_types::PixelFormat::Rgba,
+        };
+        {
+            let senders = fanout.lock().unwrap();
+            for (_, tx) in senders.iter() {
+                let _ = tx.send(frame2.clone());
+            }
+        }
+        assert!(rx_a.try_recv().is_ok());
+        assert!(rx_b.try_recv().is_ok());
+
+        fanout.lock().unwrap().remove("peer-a");
+
+        let frame3 = RawFrame {
+            data: vec![3; 4],
+            width: 1,
+            height: 1,
+            format: bisc_media::video_types::PixelFormat::Rgba,
+        };
+        {
+            let senders = fanout.lock().unwrap();
+            for (_, tx) in senders.iter() {
+                let _ = tx.send(frame3.clone());
+            }
+        }
+        assert!(rx_a.try_recv().is_err());
+        assert!(rx_b.try_recv().is_ok());
     }
 }
