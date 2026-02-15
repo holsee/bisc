@@ -29,3 +29,6 @@ target/test-logs/
 *.db
 *.db-shm
 *.db-wal
+
+# Claude
+.claude/ralph-loop.local.md
